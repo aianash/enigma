@@ -1,11 +1,20 @@
 require 'torch'
 
-enigma = {}
+enigma = {
+	feature = {}, -- feature
+	dataset = {} -- dataset
+}
 
 -- Include global files
-torch.include('enigma', 'task.lua')
+torch.include('enigma', 'ItemTypes.lua')
+torch.include('enigma', 'Task.lua')
 
--- Include each tasks
+-- Include datasets
+torch.include('enigma', 'dataset/Datasets.lua')
+
+-- Include feature
 torch.include('enigma', 'feature/Feature.lua')
+
+
 
 return enigma

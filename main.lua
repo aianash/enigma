@@ -6,29 +6,39 @@ local lapp = require 'pl.lapp'
 torch.setdefaulttensortype('torch.FloatTensor')
 
 local opt = lapp [[
-Enigma training script for core AI model
+Run Enigma tasks for an item type (provided).
+Tasks mainly include training AI models.
+
 Main options
-	--feature 						Run feature training task
-	--search 						Run search training task
-	--preprocessing 				Dataset preprocessing task
-	-o, --output 					Output file for 
-	-d, --dataset 					Name of the dataset to use
-	-e, --epochs 					Number of epochs to run
+------------
+	-i, --itemType  (string)  				Item Type for which this task is being run. (See itemTypes.lua)				
+	--feature 						Run Feature task
+	--search 						Run Search task
+	--preprocessing 					Run Dataset preprocessing task
+	-d, --dataset 	(default nil)				Name of the dataset to use
+	-s, --datasetSource 	(default nil)				Path to dataset directory or file
+	--datasetArgs 	(default nil)				Comma seperated args to dataset, refer individual datasets
 
 Feature Training options
-	--glimpses 						Comma seperated glimpses config with their weights
+------------------------
+(For detail look for comments in feature/Feature.lua)
+	--train  	(string)				Name of the model to train
+	--configDir	(default "./config")			Path to directory containing model config files
+	-o, --output 						Output file for 
+
 
 Search Training options
-	--glimpses 						Comma seperated glimpses config with their weights
+-----------------------
 
 Preprocessing Task options
+--------------------------
 
 ]]
 
 local task
 
 if opt.feature then
-	task = enigma.Feature(opt)
+	task = enigma.feature.Feature(opt)
 elseif opt.complete then
 	task = enigma.Search(opt)
 elseif opt.preprocessing then
