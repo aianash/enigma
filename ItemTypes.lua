@@ -3,7 +3,7 @@
 -- Defines all item types recognized by enigma
 -- Every task is run independently for a given item type
 -------------------------------------------------
-local ItemTypes = torch.class('enigma.ItemTypes')
+local ItemTypes = klazz('enigma.ItemTypes')
 ItemTypes.isItemTypes = true
 
 -- matches/validates and returns identifier for
@@ -13,3 +13,5 @@ ItemTypes.isItemTypes = true
 function ItemTypes:get(cmdStr)
 
 end
+
+return ItemTypes

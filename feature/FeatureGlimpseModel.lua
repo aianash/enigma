@@ -1,21 +1,21 @@
-local Datasets = enigma.dataset.Datasets()
-
 -------------------------------------------------------------------------
 --[[ enigma.FeatureGlimpseModel ]]--
 -- Deep Neural Network model identify and normalize features
 -- This model uses Spatial Transformer Network with complete Affine
 -- projection
 -------------------------------------------------------------------------
-local FeatureGlimpseModel, parent = torch.class('enigma.feature.FeatureGlimpseModel', 'enigma.feature.FeatureModel')
+local FeatureGlimpseModel, parent = klazz('enigma.feature.FeatureGlimpseModel', 'enigma.feature.FeatureModel')
 FeatureGlimpseModel.isFeatureGlimpseModel = true
 
+local dataset = enigma.dataset
+
 function FeatureGlimpseModel:__init(config, cmdOpt)
-	parent:__init("Feature Glimpse", "Description", config)
+	parent.__init(self, "Feature Glimpse", "Description", config)
 	self.epochs = self.config.epochs
 
-	self.dataset = Datasets:get(cmdOpt.dataset, cmdOpt.datasetSource, cmdOpt.datasetArgs)
+	self.dataset = dataset.Datasets:get(cmdOpt.dataset, cmdOpt.datasetSource, cmdOpt.datasetArgs)
 	if not self.dataset or not self.dataset.isImageGlimpseIntentVectorDataset then
-		error('This model requires '..enigma.dataset.ImageGlimpseIntentVectorDataset.name..' dataset')
+		error('This model requires '..dataset.ImageGlimpseIntentVectorDataset.name..' dataset')
 	end
 end
 
@@ -28,3 +28,5 @@ end
 function FeatureGlimpseModel:test()
 	-- body
 end
+
+return FeatureGlimpseModel

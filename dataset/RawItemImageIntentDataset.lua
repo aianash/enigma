@@ -8,7 +8,7 @@ require 'image'
 -- csv columns are
 -- [Filename, Relevant Intent, Irrelevant Intent]
 --------------------------------------------------------------------------- 
-local RawItemImageIntentDataset, parent = torch.class('enigma.dataset.RawItemImageIntentDataset', 'enigma.dataset.Dataset')
+local RawItemImageIntentDataset, parent = klazz('enigma.dataset.RawItemImageIntentDataset', 'enigma.dataset.Dataset')
 RawItemImageIntentDataset.isRawItemImageIntentDataset = true
 RawItemImageIntentDataset.name = 'raw-item-image-intent'
 
@@ -65,3 +65,5 @@ end
 function RawItemImageIntentDataset:validation(num)
 	error('No validation dataset, use complete')
 end
+
+return RawItemImageIntentDataset

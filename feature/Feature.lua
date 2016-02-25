@@ -1,5 +1,3 @@
-torch.include('enigma', 'feature/FeatureModels.lua')
-
 ---------------------------------------------------------------------
 --[[ enigma.Feature ]]--
 -- This class performs feature related tasks that include
@@ -7,7 +5,7 @@ torch.include('enigma', 'feature/FeatureModels.lua')
 -- 	  features provided glimpses. These are used as pre-trained models
 --    for complete search training.
 ---------------------------------------------------------------------
-local Feature, parent = torch.class('enigma.feature.Feature', 'enigma.Task')
+local Feature, parent = klazz('enigma.feature.Feature', 'enigma.Task')
 Feature.isFeature = true
 
 -- singleton instance
@@ -37,3 +35,5 @@ end
 function Feature:mkDescription()
 	return string.format("Feature task running for model [%s]\n%s\n", self.model.name, self.model.description)
 end
+
+return Feature

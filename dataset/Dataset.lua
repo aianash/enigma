@@ -2,7 +2,7 @@
 --[[ enigma.Dataset ]]--
 -- Abstract class for all datasets
 ---------------------------------------------
-local Dataset = torch.class('enigma.dataset.Dataset')
+local Dataset = klazz('enigma.dataset.Dataset')
 Dataset.isDataset = true
 
 --
@@ -29,3 +29,5 @@ end
 function Dataset:validation()
 	error('Not implemented')
 end
+
+return Dataset

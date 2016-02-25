@@ -1,11 +1,10 @@
+require 'enigma'
 require 'torch'
-
-local enigma = require 'enigma'
-local lapp = require 'pl.lapp'
+local pl = (require 'pl.import_into')()
 
 torch.setdefaulttensortype('torch.FloatTensor')
 
-local opt = lapp [[
+local opt = pl.lapp [[
 Run Enigma tasks for an item type (provided).
 Tasks mainly include training AI models.
 
@@ -35,15 +34,17 @@ Preprocessing Task options
 
 ]]
 
+
+print("\n\n")
 local task
 
 if opt.feature then
 	task = enigma.feature.Feature(opt)
 elseif opt.complete then
-	task = enigma.Search(opt)
+	task = enigma.search.Search(opt)
 elseif opt.preprocessing then
-	task = enigma.Preprocessing(opt)
+	task = enigma.preprocessing.Preprocessing(opt)
 end
 
-task:print()
+-- task:print()
 task:begin()
