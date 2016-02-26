@@ -12,15 +12,17 @@ pl.stringx.import()
 -- create a loading module which
 -- with overloaded __index function
 -- looks for a file and requires it
-local function lazyloadingmodule(name)
-   local mod = { relmodname = '', submodules = {} } -- lazy loaded
+local function createLazyloadingModule(name)
+   local mod = {
+      relmodname = '', -- relative module name for eg:
+                       -- if mod name is enigma.feature.Feature
+                       -- then relmodname is feature.Feature
+      loadedsubmodules = {}  -- contains what submodules have been loaded
+   } -- this is the lazy loaded
 
    function mod:_relativemodname(name)
-      if self.relmodname ~= '' then
-         return self.relmodname.."."..name
-      else 
-         return name
-      end
+      if self.relmodname ~= '' then return self.relmodname.."."..name
+      else return name end
    end
 
    if name then mod.relmodname = name end
@@ -47,9 +49,9 @@ end
 --
 local function getOrCreateSubmodule(name, parent)
    assert(type(parent) == 'table', 'Parent is not yet created')
-   if not parent.submodules[name] then
-      parent[name] = lazyloadingmodule(parent:_relativemodname(name))
-      parent.submodules[name] = true
+   if not parent.loadedsubmodules[name] then
+      parent[name] = createLazyloadingModule(parent:_relativemodname(name))
+      parent.loadedsubmodules[name] = true
       return parent[name]
    else
       return parent[name]
@@ -73,12 +75,20 @@ end
 --
 return function (primarypkgname)
 
-   local function withinprimary(name) return name:lfind(primarypkgname, 1) ~= nil end   
+   ------- Helper Function ------
 
-   _G[primarypkgname] = lazyloadingmodule()
+   -- check whether the name in within
+   -- primary
+   local function withinprimary(name) return name:sub(1, #primarypkgname) == primarypkgname end   
 
-   -- create a submodule where, automatically create
-   -- parent if not present
+
+   -------- Global OOP Helper Functions --------
+
+   -- primary package in global scope
+   _G[primarypkgname] = createLazyloadingModule()
+
+   -- create a submodule (lazy loaded)
+   -- automatically create parent if not present
    _G.submodule = function (name)
       assert(withinprimary(name), 'Submodule not inside primary package '..primarypkgname)
 
@@ -94,19 +104,36 @@ return function (primarypkgname)
    end
 
    --
-   _G.import = function (name)
+   _G.import = function (_name) local name = _name:replace("\n", ""):replace(" ", "")
       assert(withinprimary(name), 'Submodule not inside primary package '..primarypkgname)
-
       local mod = name:split('.', 2)[2]
       assert(mod, 'No name for submodules')
 
       local parent = _G[primarypkgname]
 
-      for _, submod in ipairs(mod:split('.')) do
-         parent = parent[submod]
+      local returns = {}
+      local mods = mod:split('.')
+      local ismultiimport = false
+
+      for k, submod in ipairs(mods) do
+         if submod:sub(1, 1) == '{' then
+            if k ~= #mods then
+               error(string.format('Multi import not allowed in between, error at [%s] in [%s]', submod, name))
+            else
+               local multimods = submod:sub(2, #submod - 1):split(",")
+               for _, multimod in ipairs(multimods) do
+                  returns[#returns + 1] = parent[multimod]
+               end
+            end
+            ismultiimport = true
+            break -- after a multi import, no further import is valid anyway 
+         else parent = parent[submod]
+         end
       end
 
-      return parent
+      if ismultiimport then return table.unpack(returns)
+      else return parent
+      end
    end
 
    --

@@ -1,7 +1,14 @@
 local pl = (require 'pl.import_into')()
 pl.stringx.import()
 
-local d = import('enigma.dataset')
+-- get individual dataset and pack them to
+-- create a map table
+local datasets = table.pack(import  [[
+                                       enigma.dataset.{
+                                          RawItemImageIntentDataset,
+                                          ImageGlimpseIntentVectorDataset
+                                       }
+                                    ]])
 
 -----------------------------------------------
 --[[ enigma.Datasets ]]--
@@ -10,26 +17,21 @@ local d = import('enigma.dataset')
 local Datasets = klazz('enigma.dataset.Datasets')
 Datasets.isDatasets = true 
 
+Datasets._map = {}
+for _, dataset in ipairs(datasets) do
+   Datasets._map[dataset.name] = dataset
+end
+
 --
 function Datasets:get(name, source, argstr)
-	local dataset
-	local args = {}
-	if type(argstr) == 'string' then
-		args = argstr:split(',')
-	end
-
-	if name == d.RawItemImageIntentDataset.name then
-		dataset = d.RawItemImageIntentDataset(source, args[1], args[2])
-	elseif name == d.ImageGlimpseIntentVectorDataset.name then
-		dataset = d.ImageGlimpseIntentVectorDataset(source, args[1])
-	end
-
-	return dataset
+   local args = {}
+   if type(argstr) == 'string' then args = argstr:split(',') end
+   return Datasets._map[name](source, args)
 end
 
 --
 function Datasets:createNew(name)
-	-- body
+   -- body
 end
 
 return Datasets

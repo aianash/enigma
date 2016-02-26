@@ -7,19 +7,19 @@ FeatureModel.isFeatureModel = true
 
 --
 function FeatureModel:__init(name, description, config)
-	self.name = name
-	self.description = description
-	self.config = config
+   self.name = name
+   self.description = description
+   self.config = config
 end
 
 --
 function FeatureModel:train()
-	error('Not implemented')
+   error('Not implemented')
 end
 
 --
 function FeatureModel:test()
-	error('Not implemented')
+   error('Not implemented')
 end
 
 return FeatureModel
