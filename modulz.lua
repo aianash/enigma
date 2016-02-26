@@ -30,9 +30,7 @@ local function lazyloadingmodule(name)
    -- override __index to lazy load
    -- any missing modules
    function modmt.__index(t, name)
-      print("lazyloadingmodule__index "..t:_relativemodname(name))
       local mod = require(t:_relativemodname(name))
-      print("lazyloadingmodule__index after require "..tostring(mod).."\n")
       if mod then
          rawset(t, name, mod)
          return t[name]
@@ -50,7 +48,6 @@ end
 local function getOrCreateSubmodule(name, parent)
    assert(type(parent) == 'table', 'Parent is not yet created')
    if not parent.submodules[name] then
-      print("not in parent so loading " .. name)
       parent[name] = lazyloadingmodule(parent:_relativemodname(name))
       parent.submodules[name] = true
       return parent[name]
@@ -84,36 +81,31 @@ return function (primarypkgname)
    -- parent if not present
    _G.submodule = function (name)
       assert(withinprimary(name), 'Submodule not inside primary package '..primarypkgname)
-      -- print(name)
-      -- print(name:split('.')[1])
+
       local mod = name:split('.', 2)[2]
       assert(mod, 'No name for submodules')
-      print("creating submodule = " .. mod)
+
       local parent = _G[primarypkgname]
 
       for _, submod in ipairs(mod:split('.')) do
-         print("getOrCreateSubmodule = " ..submod)
          parent = getOrCreateSubmodule(submod, parent)
       end
-      print("all submodules created = " ..parent.relmodname)
       return parent
    end
 
    --
    _G.import = function (name)
       assert(withinprimary(name), 'Submodule not inside primary package '..primarypkgname)
-      -- print(name)
-      -- print(name:split('.')[1])
+
       local mod = name:split('.', 2)[2]
       assert(mod, 'No name for submodules')
-      print("importing = " .. mod)
+
       local parent = _G[primarypkgname]
 
       for _, submod in ipairs(mod:split('.')) do
-         print("parent = " ..submod)
          parent = parent[submod]
       end
-      -- print("all submodules created = " ..parent.relmodname)
+
       return parent
    end
 
@@ -143,15 +135,14 @@ return function (primarypkgname)
             return self
          end
 
-      if parentname and withinprimary(name) then
-         print("klazz geting parent = ".. parentname)
+      if not parentname then
+         return constructortbl(mt)
+      elseif withinprimary(parentname) then
          local parent = import(parentname)
-         -- print("after loading parent " .. parent.relmodname)
-
-         setmetatable(mt, parent)
+         setmetatable(mt, getmetatable(parent))
          return constructortbl(mt), parent
       else
-         return constructortbl(mt)
+         error('Parent name present but not within primary package')
       end
    end
 

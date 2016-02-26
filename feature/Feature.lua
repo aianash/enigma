@@ -36,4 +36,5 @@ function Feature:mkDescription()
 	return string.format("Feature task running for model [%s]\n%s\n", self.model.name, self.model.description)
 end
 
+
 return Feature
