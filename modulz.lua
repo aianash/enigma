@@ -166,10 +166,10 @@ return function (primarypkgname)
          return constructortbl(mt)
       elseif withinprimary(parentname) then
          local parent = import(parentname)
-         setmetatable(mt, {
-               __index = parent,
-               __metatable = parent
-            })
+         local inhmt = { __index = parent } -- NOTE: This is where modifications for multiple inheritance
+                                            -- should be done
+         inhmt.__metatable = inhmt
+         setmetatable(mt, inhmt)
          return constructortbl(mt), parent
       else
          error('Parent name present but not within primary package')
