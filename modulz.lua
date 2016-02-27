@@ -166,7 +166,7 @@ return function (primarypkgname)
          return constructortbl(mt)
       elseif withinprimary(parentname) then
          local parent = import(parentname)
-         setmetatable(mt, getmetatable(parent))
+         setmetatable(mt, { __index = parent })
          return constructortbl(mt), parent
       else
          error('Parent name present but not within primary package')
