@@ -13,7 +13,6 @@ Main options
 	-i, --itemType  (string)  				Item Type for which this task is being run. (See itemTypes.lua)				
 	--feature 						Run Feature task
 	--search 						Run Search task
-	--preprocessing 					Run Dataset preprocessing task
 	-d, --dataset 	(default nil)				Name of the dataset to use
 	-s, --datasetSource 	(default nil)				Path to dataset directory or file
 	--datasetArgs 	(default nil)				Comma seperated args to dataset, refer individual datasets
@@ -53,11 +52,7 @@ print [[
 local task
 
 if opt.feature then
-	task = enigma.feature.Feature(opt)
-elseif opt.complete then
-	task = enigma.search.Search(opt)
-elseif opt.preprocessing then
-	task = enigma.preprocessing.Preprocessing(opt)
+	task = enigma.feature.FeatureTask(opt)
 end
 
 -- task:print()
