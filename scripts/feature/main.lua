@@ -2,6 +2,7 @@ local pl = (require 'pl.import_into')()
 require 'image'
 require 'torch'
 require 'nnx'
+require 'enigma'
 
 pl.stringx.import()
 torch.setdefaulttensortype('torch.FloatTensor')
@@ -305,6 +306,7 @@ do
       for featurename, tbl in pairs(dataset) do
          if tbl.numEntries ~= 0 then
             local featuredataset = {}
+            --                                  numEntries     numGlimpses          image channel        height               width
             featuredataset.data = torch.Tensor(tbl.numEntries, tbl.data[1]:size(1), tbl.data[1]:size(2), tbl.data[1]:size(3), tbl.data[1]:size(4))
             for idx, t in ipairs(tbl.data) do
                featuredataset.data[idx]:copy(t)
@@ -321,7 +323,8 @@ do
    persistGlimpses = function (trainDataset, testDataset, validationDataset)
       persist(trainDataset, 'Train')         
       persist(testDataset, 'Test')         
-      if validationDataset then persist(trainDataset, 'Validation') end         
+      if validationDataset then persist(trainDataset, 'Validation') end
+      return targetRootdir         
    end
 end
 
@@ -330,10 +333,88 @@ end
 --[[ D. [Optional] Train spatial transformer network separately for each collection of feature glimpse vectors ]]--
 -------------------------------------------------------------------------------------------------------------------
 do
-   trainModel = function () end
+   --[[ Config ]]--
+   local oH = 32
+   local oW = 32
+
+   local pretrainEpoch = 4
+   local epoch = 10
+   local batchSize = 2
+
+   local targetModeldir = './feature-models'
+
+   --[[ End Config ]]--
+
+   local models = require 'scripts.feature.models'
+   local mobius = require 'scripts.feature.mobius'
+
+   trainModel = function (datasetRootdir)
+      local featuredirs = pl.dir.getdirectories(datasetRootdir)
+      table.sort(featuredirs)
+
+      for _, featuredir in ipairs(featuredirs) do
+         local featurename = pl.path.basename(featuredir)
+
+         local trainDataset = torch.load(pl.path.join(featuredir, featurename.."-glimpses-train.bin"))
+         local testDataset = torch.load(pl.path.join(featuredir, featurename.."-glimpses-test.bin"))
+         local validationDataset = torch.load(pl.path.join(featuredir, featurename.."-glimpses-validation.bin")) -- [TO DO] test if present first
+
+         -- local gC, gH, gW = trainDataset:size(3), trainDataset:size(4), trainDataset:size(5)
+
+         local featureSTM = models.newFeaturemodel()
+         local featureMFA = models.newMFAmodel(oH, oW)
+
+         -- [TO DO] pre-training independently the MFA model
+         -- as its generative. dataset is directly scaled
+         -- for e = 1, pretrainEpoch do
+         --    featureFA:pretrain(trainDataset)
+         -- end
+
+         local featureSTMOptState = {
+            momentum = 2,
+            learningRate = 1,
+            learningRateDecay = 1,
+            weightDecay = 2 
+         }
+
+         -- mobius training
+         -- [TO DO] probably no need for primary and secondaris... just branches
+         local trainer = mobius.MobiusTrainer:new{
+            topology = { -- defining topology of mobius learning
+               [1] = {
+                  model = featureSTM,
+                  optimizer = mobius.NNOptim:new(featureSTM, optim.sgd, featureSTMOptState),
+                  parent = {
+                     model = mobius.Identity:new() -- [TODO] this is wrong here... 
+                  }
+               },
+
+               [2] = {
+                  model = mobius.Nothing:new(),
+                  parent = {
+                     model = featureMFA,
+                     optimizer = mobius.MFAOptim:new(featureMFA)
+                  }
+               }
+            },
+            iterations = { name = 'exponential-backoff', max = 10, min = 5 },
+            batchSize = batchSize
+         }
+
+         for e = 1, epoch do
+            print("running epoch")
+            trainer:train(trainDataset) -- train on dataset
+            trainer:resetIterationScheme()
+
+            -- calculate accuracy on test
+            -- persist current model
+         end
+
+      end
+   end
 end
 
 
 -- Final execution
 -- [TO DO] Add optional executions
-persistGlimpses(createFeatureGlimpse(explodeDataset()))
+trainModel(persistGlimpses(createFeatureGlimpse(explodeDataset())))
