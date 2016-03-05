@@ -1,3 +1,27 @@
+local pl = require('pl.import_into')()
+
+-- from fblualib/fb/util/data.lua , copied here because fblualib is not rockspec ready yet.
+-- deepcopy routine that assumes the presence of a 'clone' method in user
+-- data should be used to deeply copy. This matches the behavior of Torch
+-- tensors.
+local function deepcopy(x)
+    local typename = type(x)
+    if typename == "userdata" then
+        return x:clone()
+    end
+    if typename == "table" then
+        local retval = { }
+        for k,v in pairs(x) do
+            retval[deepcopy(k)] = deepcopy(v)
+        end
+        return retval
+    end
+    return x
+end
+
+-----------------
+--[[ Mobius ]]--
+-----------------
 local mobius = {}
 
 ----------------------------------------------------------------------------------
@@ -249,105 +273,135 @@ end
 -- method
 ------------------------
 local NNOptim = {}
-function NNOptim:new(...)
-   local o = {}
-   setmetatable(0, self)
-   self.__index = self
-   o:__init(...)
-   return o
-end
+do -- creating local scope for local variables
+   function NNOptim:new(...)
+      local o = {}
+      setmetatable(0, self)
+      self.__index = self
+      o:__init(...)
+      return o
+   end
 
--- Returns weight parameters and bias parameters and associated grad parameters
--- for this module. Annotates the return values with flag marking parameter set
--- as bias parameters set
-function NNOptim.weight_bias_parameters(module)
-    local weight_params, bias_params
-    if module.weight then
-        weight_params = {module.weight, module.gradWeight}
-        weight_params.is_bias = false
-    end
-    if module.bias then
-        bias_params = {module.bias, module.gradBias}
-        bias_params.is_bias = true
-    end
-    return {weight_params, bias_params}
-end
+   -- Returns weight parameters and bias parameters and associated grad parameters
+   -- for this module. Annotates the return values with flag marking parameter set
+   -- as bias parameters set
+   function NNOptim.weight_bias_parameters(module)
+       local weight_params, bias_params
+       if module.weight then
+           weight_params = {module.weight, module.gradWeight}
+           weight_params.is_bias = false
+       end
+       if module.bias then
+           bias_params = {module.bias, module.gradBias}
+           bias_params.is_bias = true
+       end
+       return {weight_params, bias_params}
+   end
 
--- [TO DO] no checkpoint supported yet
-function NNOptim:__init(model, optimMethod, optState)
-   
-   self.model = model
-   self.optimMethod = optimMethod
+   -- [TO DO] no checkpoint supported yet
+   function NNOptim:__init(model, optimMethod, optState)
+      
+      self.model = model
+      self.optimMethod = optimMethod
 
-   self.originalOptState = optState
+      self.originalOptState = optState
 
-   self.modulesToOptState = {}
-   self.model:for_each(function(module)
-      self.modulesToOptState[module] = {}
-      local params = self.weight_bias_parameters()
-      -- expects either an empty table or 2 element table, one for weights
-      -- and one for biases
-      assert(pl.tablex.size(params) == 0 or pl.tablex.size(params) == 2)
-      for i, _ in ipairs(params) do
-          self.modulesToOptState[module][i] = deepcopy(optState)
-          if params[i] and params[i].is_bias then
-              -- never regularize biases
-              self.modulesToOptState[module][i].weightDecay = 0.0
+      self.modulesToOptState = {}
+      self.model:for_each(function(module)
+         self.modulesToOptState[module] = {}
+         local params = self.weight_bias_parameters()
+         -- expects either an empty table or 2 element table, one for weights
+         -- and one for biases
+         assert(pl.tablex.size(params) == 0 or pl.tablex.size(params) == 2)
+         for i, _ in ipairs(params) do
+             self.modulesToOptState[module][i] = deepcopy(optState)
+             if params[i] and params[i].is_bias then
+                 -- never regularize biases
+                 self.modulesToOptState[module][i].weightDecay = 0.0
+             end
+         end
+         assert(module)
+         assert(self.modulesToOptState[module])
+      end)
+   end
+
+   local function get_device_for_module(mod)
+      local dev_id = nil
+      for name, val in pairs(mod) do
+          if torch.typename(val) == 'torch.CudaTensor' then
+              local this_dev = val:getDevice()
+              if this_dev ~= 0 then
+                  -- _make sure the tensors are allocated consistently
+                  assert(dev_id == nil or dev_id == this_dev)
+                  dev_id = this_dev
+              end
           end
       end
-      assert(module)
-      assert(self.modulesToOptState[module])
-   end)
-end
-
-local function get_device_for_module(mod)
-   local dev_id = nil
-   for name, val in pairs(mod) do
-       if torch.typename(val) == 'torch.CudaTensor' then
-           local this_dev = val:getDevice()
-           if this_dev ~= 0 then
-               -- _make sure the tensors are allocated consistently
-               assert(dev_id == nil or dev_id == this_dev)
-               dev_id = this_dev
-           end
-       end
+      return dev_id -- _may still be zero if none are allocated.
    end
-   return dev_id -- _may still be zero if none are allocated.
-end
 
-local function on_device_for_module(mod, f)
-    local this_dev = get_device_for_module(mod)
-    if this_dev ~= nil then
-        return cutorch.withDevice(this_dev, f)
-    end
-    return f()
-end
+   local function on_device_for_module(mod, f)
+      local this_dev = get_device_for_module(mod)
+      if this_dev ~= nil then
+         return cutorch.withDevice(this_dev, f)
+      end
+      return f()
+   end
 
-function NNOptim:optimize(err)
-   
-end
+   --
+   function NNOptim:optimize(err)
+      local curGrad
+      local curParam
+      local function fEvalMod(x)
+         return err, curGrad
+      end 
 
+      for curMod, opt in pairs(self.modulesToOptState) do
+         on_device_for_module(curMod, function()
+            local curModParams = self.weight_bias_parameters(curMod)
+
+            assert(pl.tablex.size(curModParams) == 0 or
+                  pl.tablex.size(curModParams) == 2)
+            if curModParams then
+               for i, tensor in ipairs(curModParams) do
+                  if curModParams[i] then
+                     -- expect param, gradParam pair
+                     curParam, curGrad = table.unpack(curModParams[i])
+                     assert(curParam and curGrad)
+                     self.optimMethod(fEvalMod, curParam, opt[i])
+                  end
+               end
+            end
+         end)
+      end
+   end
+end
 
 -----------------------------
 --[[ MFAOptim ]]--
---
+-- This optimizer updates the hyperparameters
+-- of the VBMFA model, after posteriors have
+-- been inferred in backward step, by the model
 -----------------------------
 local MFAOptim = {}
-function MFAOptim:new(...)
-   local o = {}
-   setmetatable(o, self)
-   self.__index = self
-   o:__init(...)
-   return o
-end
+do -- starting local context for various helper functions
+   function MFAOptim:new(...)
+      local o = {}
+      setmetatable(o, self)
+      self.__index = self
+      o:__init(...)
+      return o
+   end
 
---
-function MFAOptim:__init(model)
+   --
+   function MFAOptim:__init(model)
+      
+   end
 
-end
+   --
+   function MFAOptim:optimize(err)
 
---
-function MFAOptim:optimize(err)
+   end
 
 end
 
