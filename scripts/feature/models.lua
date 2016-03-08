@@ -169,7 +169,7 @@ do
       local _Xm, _Xcov, Qs = self.hidden:get()
       local _Lm, _Lcov = self.factorLoading:get()
 
-      local PsiI = self.hidden.PsiI
+      local PsiI = self.hyper.PsiI
 
       for t = 1, s do
          local Lmt = _Lm[t]:narrow(2, 2, k) -- p x k 
@@ -204,7 +204,7 @@ do
          local kQst = Qst:repeatTensor(k + 1, 1) -- (k + 1) x n
          local _XmtQst = torch.cmul(_Xmt, kQst) -- (k + 1) x n
 
-         local PsiIY_XmtQst = diag(PsiI) * Y * _XmtQst:t() -- p x (k + 1)
+         local PsiIY_XmtQst = torch.diag(PsiI) * Y * _XmtQst:t() -- p x (k + 1)
          local ustr_expnd = torch.cat(ustr, torch.zeros(p, k), 2) -- p x (k + 1)
 
          local abt = torch.div(b[t], a):cinv():repeatTensor(p, 1) -- p x k
@@ -212,10 +212,10 @@ do
 
          local E = _Xcov[t] * torch.sum(Qst) + _Xmt * _XmtQst:t() -- (k + 1) x (k + 1)
 
-         for q = 1:p do
+         for q = 1, p do
             torch.inverse(_Lcov[t][q], torch.diag(vstr_abt[q]) + E * PsiI[q]) -- inv{ (k + 1) x (k + 1) + (k + 1) x (k + 1) }
             _Lm[t][q]:mm(PsiIY_XmtQst[q] + ustr_expnd[q] * torch.diag(vstr_abt[q]), _Lcov[t][q])
-                     -- { p x (k + 1)     + (p x (k + 1)  * ((k + 1) x (k + 1))}    * ((k + 1) x (k + 1))
+                     -- { (k + 1)        + (k + 1)  * ((k + 1) x (k + 1)) }       * ((k + 1) x (k + 1))
          end
       end
    end
@@ -240,7 +240,7 @@ do
       local _Lm, _Lcov, _, b = self.factorLoading:get()
       local _, _, astr, bstr, _, _ = self.hyper:get()
       
-      self.a = astr + p / 2
+      self.factorLoading.a = astr + p / 2
       for t = 1, s do
          local Lmt = _Lm[t][{ {}, {2, k + 1} }] -- p x k
          local Lcovt = _Lcov[t][{ {}, {2, k + 1}, {2, k + 1} }] -- p x k x k
@@ -253,7 +253,7 @@ do
    function VBMFA:inferQpi()
       local n, s, p, k = self:_setandgetDims()
       local _, _, Qs, am = self.hidden:get()
-      local alphastrm = alphastr / s * torch.ones(s)
+      local alphastrm = self.hyper.alphastr / s * torch.ones(s)
 
       am:add(alphastrm, torch.sum(Qs, 1)[1])
    end
