@@ -1,5 +1,3 @@
-local VBCMFA = {}
-
 ----------------------
 --[[ MFA ]]--
 -- Implements the Variational Bayesian
@@ -12,7 +10,7 @@ local VBCMFA = {}
 -- Z  - s x k x n
 -- G  - s x p x f
 -- x  - s x f
--- X  - x x f x n
+-- X  - s x f x n
 -- S  - n x s
 --
 -- Priors
@@ -40,7 +38,7 @@ local VBCMFA = {}
 -- Zcov - s x k x k            (hidden params)
 -- 
 -- Xm   - s x f x n
--- Xcov - s x f x f
+-- Xcov - s x n x f x f
 --
 -- Qs   - n x s
 -- phim - s
@@ -63,28 +61,39 @@ local VBCMFA = {}
 -- alpha_star - 1
 -- beta_star  - 1
 -- 
+-- E_starI    - n x f x f
+--
 -- phi_star   - 1                        (a number)
 --
 -- PsiI       - p                        (a diagonal matrix)
 ----------------------
-function VBCMFA:new(...)
+local VBCMFA = {}
+
+--
+function VBMFA:_factory()
    local o = {}
    setmetatable(o, self)
    self.__index = self
+   return o
+end
+
+--
+function VBCMFA:new(...)
+   local o = self:_factory()
    o:__init(...)
    return o
 end
 
 --
 function VBCMFA:__init(cfg)
-   local n, s, p, k, f = self:_setandgetDims(cfg)
+   local n, s, p, k, f, N = self:_setandgetDims(cfg)
 
    self.hidden = {
       Zm = torch.Tensor(s, k, n),
       Zcov = torch.Tensor(s, k, k):zeros(),
 
       Xm = torch.Tensor(s, f, n),
-      Xcov = torch.Tensor(s, f, f):zeros(),
+      Xcov = torch.Tensor(s, n, f, f):zeros(),
 
       Qs = torch.Tensor(n, s),
       phim = torch.Tensor(s),
@@ -131,7 +140,7 @@ function VBCMFA:__init(cfg)
       alpha_star = 1,
       beta_star = 1, 
 
-      E_starI = torch.Tensor(f, f),
+      E_starI = torch.Tensor(n, f, f),
 
       phi_star = 1,
 
@@ -153,8 +162,32 @@ function VBCMFA:_setandgetDims(cfg)
       self.p = cfg.outputVectorSize
       self.k = cfg.factorVectorSize
       self.f = cfg.inputVectorSize
+      self.N = cfg.datasetSize
    end
-   return self.n, self.s, self.p, self.k, self.f
+   return self.n, self.s, self.p, self.k, self.f, self.N
+end
+
+--
+function VBMFA:_checkDimensions(tensor, ...)
+   local dimensions = {...}
+   if #dimensions ~= tensor:nDimension() then
+      return false, string.format("Wrong number of dimension = %d, expecting %d", tensor:nDimension(), #dimensions) 
+   end
+
+   local res = true
+   for idx, size in ipairs(dimensions) do
+      res = res and (tensor:size(idx) == size)
+      if not res then 
+         return false, string.format("wrong size = %d at dimension %d, expecting size = %d", tensor:size(idx), idx, size) 
+      end
+   end
+
+   return true
+end
+
+--
+function VBCMFA:_perpareForBatch(batchIdx)
+   -- body
 end
 
 ------------
@@ -208,11 +241,11 @@ function VBCMFA:inferQZ(Y)
       local nY = Y - Gm[t] * Xm[t] -- p x n
       local LmtTPsiInY = LmtTPsiI * nY -- k x n
 
-      local ELTPsiIL = torch.reshape(torch.reshape(Lcovt, p, k * k):t() * PsiI, k, k)
+      local ELTPsiIL = torch.view(torch.view(Lcovt, p, k * k):t() * PsiI, k, k)
                            + LmtTPsiI * Lmt -- k x k
 
       torch.inverse(Zcovt, torch.eye(k) + ELTPsiIL) -- k x k
-      Zm[t]:mm(Zcovt, LmtPsiInY) -- k x k * k x n
+      Zm[t]:mm(Zcovt, LmtTPsiInY) -- k x k * k x n
    end
 end
 
@@ -229,18 +262,7 @@ function VBCMFA:inferQnu( ... )
       local EL_sqr = torch.diag(torch.sum(Lcovt, 1)[1]) + torch.sum(torch.pow(Lmt, 2), 1)[1] -- k
       b[t] = bstr * torch.ones(k) + 0.5 * EL_sqr
    end
-   local n, s, p, k, f = self:_setandgetDims()
-   local Lm, Lcov, _, b = self.factorLoading:getL()
-   local a_star, b_star = self.hyper.a_star, self.hyper.b_star
-   
-   self.factorLoading.a = a_star + p / 2
-   for t = 1, s do
-      local Lmt = Lm[t] -- p x k
-      local Lcovt = Lcov[t] -- p x k x k
-      local EL_sqr = torch.diag(torch.sum(Lcovt, 1)[1]) + torch.sum(torch.pow(Lmt, 2), 1)[1] -- k
-      b[t] = beta_star * torch.ones(k) + 0.5 * EL_sqr
-   end
-
+end
 
 ------------
 --[[ Gx ]]--
@@ -257,14 +279,16 @@ function VBCMFA:inferQG( ... )
    
    for t = 1, s do
       local Xmt = Xm[t] -- f x n
-      local Qst = Qs[{ {}, t }]
+      local Xcovt = Xcov[t] -- n x f x f
+      local Qst = Qs[{ {}, t }] -- n
       local fQst = Qst:repeatTensor(f, 1) -- f x n
       local XmtfQst = torch.cmul(Xmt, fQst) -- f x n
 
       local nY = Y - Lm[t] * Zm[t] -- p x n
       local PsiInYXmtfQstT = torch.diag(PsiI) * nY * XmtfQst:t() -- p x f
 
-      local QstExxT = Xcov[t] * torch.sum(Qst) + Xmt * XmtfQst:t() -- f x f
+      local EXcovtQs = torch.view(torch.view(Xcovt, n, f * f):t() * Qst, f, f) -- f x f
+      local QstExxT = EXcovtQs + Xmt * XmtfQst:t() -- f x f
       local alpha_betat = torch.div(beta[t], alpha):cinv() -- f
 
       for q = 1, p do
@@ -275,30 +299,40 @@ function VBCMFA:inferQG( ... )
 end
 
 --
-function VBCMFA:inferQX( ... )
+function VBCMFA:inferQX(X_star) -- f x n
    local n, s, p, k, f = self:_setandgetDims()
    local Gm, Gcov = self.factorLoading:getG()
    local Xm, Xcov = self.hidden:getX()
    local Lm = self.factorLoading:getL()
    local Zm = self.hidden:getZ()
-   local E_starI = self.hyper.E_starI
+   local E_starI = self.hyper.E_starI -- n x f x f
 
    for t = 1, s do
-      local Gmt = Gm[t]
-      local Gcovt = Gcov[t]
-      local Xcovt = Xcov[t]
+      local Gmt = Gm[t] -- p x k
+      local Gcovt = Gcov[t] -- p x k x k
+      local Xcovt = Xcov[t] -- n x f x f
 
       local GmtTPsiI = Gmt:t() * PsiI -- f x p
       
+
+      local EGTPsiIG = torch.view(torch.view(Gcovt, p, f * f):t() * PsiI, f, f)
+                           + GmtTPsiI * Gmt -- f x f
+
+
+      local E_starIEGTPsiIG_split = (E_starI + EGTPsiIG:view(1, f, f):expand(n, f, f)):split(1) -- n x f x f, expand doesn't allocate new memory
+      for i, XcovtiI in ipairs(E_starIEGTPsiIG_split) do
+         Xcovt[i] = XcovtiI:inverse() -- f x f
+      end
+         
+      local X_star3D = X_star:t():view(n, f, 1) -- n x f x 1
+      local E_starIX_star3D = torch.baddbmm(E_starI, X_star3D)
+      --                             n x [ f x f  * f x 1   ] = n x f x 1
+  
       local nY = Y - Lm[t] * Zm[t] -- p x n
       local GmtTPsiInY = GmtTPsiI * nY -- f x n
 
-      local EGTPsiIG = torch.reshape(torch.reshape(Gcovt, p, f * f):t() * PsiI, f, f)
-                           + GmtTPsiI * Gmt -- f x f
-
-      torch.inverse(Xcovt, E_starI + EGTPsiIG) -- f x f
-      Xm[t]:mm(Xcovt, E_starI * X_star + GmtPsiInY)
-      --       f x f * { f x f * f x n + f x n }
+      Xm[t] = torch.bmm(Xcovt, E_starIX_star3D + GmtTPsiInY:t()):squeeze():t() -- f x n
+      --               n x [ f x f * f x 1 ] = n x f x 1
    end
 end
 
@@ -323,7 +357,8 @@ end
 
 --
 function VBCMFA:inferQs( ... )
-   
+   local n, s, p, k, f = self:_setandgetDims()
+
 end
 
 --
@@ -340,26 +375,86 @@ end
 --------------------------
 
 --
-function VBCMFA:inferPsiI( ... )
-   
+function VBCMFA:inferPsiI(Y)
+   local n, s, p, k, f = self:_setandgetDims()
+   local Gm, Gcov = self.factorLoading:getG()
+   local Xm, Xcov = self.hidden:getX()
+   local Lm, Lcov = self.factorLoading:getL()
+   local Zm, Zcov = self.hidden:getZ()
+   local PsiI = self.hyper.PsiI
+
+   local psi = torch.zeros(p, p)
+
+   for t = 1, s do
+      local Qst = Qs[{ {}, t }]
+      local Zmt = Zm[t]
+      local Xmt = Xm[t]
+      local Xcovt = Xcov[t] -- n x f x f
+      local Lmt = Lm[t]
+      local Gmt = Gm[t]
+
+      local kQst = Qst:repeatTensor(k, 1) -- k x n
+      local EzzT = Zcov[t] * torch.sum(Qst) + Zmt * torch.cmul(Zmt, kQst):t() -- k x k
+      
+      local fQst = Qst:repeatTensor(f, 1) -- f x n
+      
+      local EXcovtQs = torch.view(torch.view(Xcovt, n, f * f):t() * Qst, f, f) -- f x f
+      local ExxT = EXcovtQs + Xmt * torch.cmul(Xmt, fQst):t() -- f x f
+
+      local EzxT = Zmt * Xmt:T() -- k x f
+      local ELzxTGT = Lmt * EzxT * Gmt:t() -- p x p
+
+      local pQst = Qst:repeatTensor(p, 1) -- p x n
+      local YpQst = torch.cmul(pQst, Y) -- p x n
+
+      local partialPsi = YpQst * (Y - 2 * Lmt * Zmt - 2 * Gmt * Xmt) -- 2 times because ultimately we 
+                        + Lmt * EzzT * Lmt:t()                       -- are concerned with the diagonal
+                        + Gmt * ExxT * Gmt:t()                       -- elements only
+                        + 2 * ELzxTGT                                -- same reason here
+      psi:add(partialPsi)
+      for q = 1, p do
+         psi[q][q] = psi[q][q] + torch.trace(Lcov[t][q] * EzzT) + torch.trace(Gcov[t][q] * ExxT)
+      end
+   end
+
+   torch.div(PsiI, torch.diag(psi), n)
+   PsiI:cinv()
 end
 
 --
 function VBCMFA:inferab( ... )
-   
+   -- not implemented yet
 end
 
 --
 function VBCMFA:inferalphabeta( ... )
-   -- body
+   -- not implemented yet
 end
 
 --
 function VBCMFA:inferPhi( ... )
-   -- body
+   -- not implemented yet
 end
 
 --
-function VBCMFA:inferE_starI( ... )
-   -- body
+function VBCMFA:inferE_starI(X_star) -- f x n
+   local n, s, p, k, f = self:_setandgetDims()
+   local Qs = self.hidden:getS()
+   local Xm, Xcov = self.hidden:getX()
+
+   local X_star3D = X_star:t():view(n, f, 1) -- n x f x 1
+   local EX_starX_starT = torch.bmm(X_star3D, X_star3D:transform(2, 3)) -- n x f x f
+
+   local Xcov_strt =  Xcov:transform(1, 2):view(n, s, f * f):transform(2, 3) -- n x (f*f) x s
+   local EXXT = torch.bmm(Xcov_strt, Qs:view(n, s, 1)):view(n, f, f) -- n x f x f
+
+   local EX = torch.bmm(Xm:transform(1, 3), Qs:view(n, s, 1)) -- n x f x 1
+
+   local EX_starXT = torch.bmm(X_star3D, EX:transform(2, 3)) -- n x f x f
+
+   local E_star = EXXT - EX_starXT - EX_starXT:transform(2, 3) + EX_starX_starT -- n x f x f
+
+   for i, E_stari in ipairs(E_star:split(1)) do
+      E_starI[i] = E_stari:inverse() -- f x f
+   end
 end
