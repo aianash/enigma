@@ -262,24 +262,25 @@ do
    function VBMFA:inferPsiI(Y, targetY)
       local n, s, p, k = self:_setandgetDims()
       local _Xm, _Xcov, Qs = self.hidden:get()
-      local _Lm, _Lcov, a, b = self.factorLoading:get()
+      local _Lm, _Lcov = self.factorLoading:get()
 
-      local psi = torch.zeros(p)
+      local psi = torch.zeros(p, p)
 
       for t = 1, s do
+         local Qst = Q[{ {}, t }]
          local kQst = Qst:repeatTensor(k + 1, 1) -- (k + 1) x n
          local _XmtQst = torch.cmul(_Xmt, kQst) -- (k + 1) x n
 
          local E = _Xcov[t] * torch.sum(Qst) + _Xmt * _XmtQst:t() -- (k + 1) x (k + 1)
          local pQst = Qst:repeatTensor(p, 1) -- p x n
          local pQstY = torch.cmul(Y, pQst) -- p x n 
-         psi = psi + pQstY * (Y - 2 * _Lm[t] * _Xm[t]):t() + _Lm[t] * E * _Lm[t]:t()
+         psi:add(pQstY * (Y - 2 * _Lm[t] * _Xm[t]):t() + _Lm[t] * E * _Lm[t]:t())
          for q = 1, p do
-            psi[q] = psi[q] + torch.trace(_Lcov[t][q] * E)
+            psi[q][q] = psi[q][q] + torch.trace(_Lcov[t][q] * E)
          end
       end
 
-      torch.div(PsiI, psi, n)
+      torch.div(PsiI, torch.diag(psi), n)
       PsiI:cinv()
    end
 
