@@ -54,7 +54,7 @@ do
 
    -- generator for transformed images
    local function tranformedimages(srcimage, filename)
-      return trimgiter, { srcimage, filename }, 0 
+      return trimgiter, { srcimage, filename }, 0
    end
 
    -- This does the heavy duty of exploding dataset
@@ -88,7 +88,7 @@ do
                local targetimgFilename = trimg[1]
                local transformedimage = trimg[2]
                image.save(pl.path.join(targetImgsubdirpath, targetimgFilename), transformedimage)
-               
+
                local newmetadata = pl.tablex.copy(metadata)
                newmetadata[filenameIdx] = targetimgFilename
                targetdata[targetdataIdx] = newmetadata
@@ -101,7 +101,7 @@ do
          pl.data.new(targetdata):write(csvfile)
          io.close(csvfile)
       end
-      
+
       return targetRootdir, srccsvFileprefix
    end
 
@@ -127,7 +127,7 @@ end -- do' end
 -------------------------------------------------------------------------------------------------------------------
 --[[ B. [Optional] Iterate thru the exploded dataset and create feature glipse vectors at predefined locations ]]--
 -------------------------------------------------------------------------------------------------------------------
-do 
+do
    -- [[ Helper Functions ]]--
 
    -- Creates a function that will create glimpses for
@@ -281,7 +281,7 @@ do
    createFeatureGlimpse = function (srcRootdir, srccsvFileprefix)
       local srcTrainRootdir = pl.path.join(srcRootdir, 'Train')
       local srcTestRootdir = pl.path.join(srcRootdir, 'Test')
-   
+
       local trainDataset, validationDataset = toGlimpses(srcTrainRootdir, srccsvFileprefix, createValidation)
       local testDataset = toGlimpses(srcTestRootdir, srccsvFileprefix)
 
@@ -318,13 +318,13 @@ do
          end
          collectgarbage()
       end
-   end 
+   end
 
    persistGlimpses = function (trainDataset, testDataset, validationDataset)
-      persist(trainDataset, 'Train')         
-      persist(testDataset, 'Test')         
+      persist(trainDataset, 'Train')
+      persist(testDataset, 'Test')
       if validationDataset then persist(trainDataset, 'Validation') end
-      return targetRootdir         
+      return targetRootdir
    end
 end
 
@@ -345,8 +345,8 @@ do
 
    --[[ End Config ]]--
 
-   local models = require 'scripts.feature.models'
-   local mobius = require 'scripts.feature.mobius'
+   -- local models = require 'scripts.feature.models'
+   -- local mobius = require 'scripts.feature.mobius'
 
    trainModel = function (datasetRootdir)
       local featuredirs = pl.dir.getdirectories(datasetRootdir)
@@ -359,10 +359,25 @@ do
          local testDataset = torch.load(pl.path.join(featuredir, featurename.."-glimpses-test.bin"))
          local validationDataset = torch.load(pl.path.join(featuredir, featurename.."-glimpses-validation.bin")) -- [TO DO] test if present first
 
+         -- Dummy code for testing CMFA model
+         local CMFA = require 'scripts.feature.cmfa'
+
+         local model = CMFA:new{
+            batchSize = 100,
+            numComponents = 3,
+            outputVectorSize = 1024,
+            factorVectorSize = 20,
+            inputVectorSize = 100,
+            datasetSize = 1000
+         }
+
+         model:train(torch.randn(1024, 1000), torch.randn(100, 1000), 1)
+
+
          -- local gC, gH, gW = trainDataset:size(3), trainDataset:size(4), trainDataset:size(5)
 
-         local featureSTM = models.newFeaturemodel()
-         local featureMFA = models.newMFAmodel(oH, oW)
+         -- local featureSTM = models.newFeaturemodel()
+         -- local featureMFA = models.newMFAmodel(oH, oW)
 
          -- [TO DO] pre-training independently the MFA model
          -- as its generative. dataset is directly scaled
@@ -370,45 +385,45 @@ do
          --    featureFA:pretrain(trainDataset)
          -- end
 
-         local featureSTMOptState = {
-            momentum = 2,
-            learningRate = 1,
-            learningRateDecay = 1,
-            weightDecay = 2 
-         }
+         -- local featureSTMOptState = {
+         --    momentum = 2,
+         --    learningRate = 1,
+         --    learningRateDecay = 1,
+         --    weightDecay = 2
+         -- }
 
          -- mobius training
          -- [TO DO] probably no need for primary and secondaris... just branches
-         local trainer = mobius.MobiusTrainer:new{
-            topology = { -- defining topology of mobius learning
-               [1] = {
-                  model = featureSTM,
-                  optimizer = mobius.NNOptim:new(featureSTM, optim.sgd, featureSTMOptState),
-                  parent = {
-                     model = mobius.Identity:new() -- [TODO] this is wrong here... 
-                  }
-               },
+         -- local trainer = mobius.MobiusTrainer:new{
+         --    topology = { -- defining topology of mobius learning
+         --       [1] = {
+         --          model = featureSTM,
+         --          optimizer = mobius.NNOptim:new(featureSTM, optim.sgd, featureSTMOptState),
+         --          parent = {
+         --             model = mobius.Identity:new() -- [TODO] this is wrong here...
+         --          }
+         --       },
 
-               [2] = {
-                  model = mobius.Nothing:new(),
-                  parent = {
-                     model = featureMFA,
-                     optimizer = mobius.MFAOptim:new(featureMFA)
-                  }
-               }
-            },
-            iterations = { name = 'exponential-backoff', max = 10, min = 5 },
-            batchSize = batchSize
-         }
+         --       [2] = {
+         --          model = mobius.Nothing:new(),
+         --          parent = {
+         --             model = featureMFA,
+         --             optimizer = mobius.MFAOptim:new(featureMFA)
+         --          }
+         --       }
+         --    },
+         --    iterations = { name = 'exponential-backoff', max = 10, min = 5 },
+         --    batchSize = batchSize
+         -- }
 
-         for e = 1, epoch do
-            print("running epoch")
-            trainer:train(trainDataset) -- train on dataset
-            trainer:resetIterationScheme()
+         -- for e = 1, epoch do
+         --    print("running epoch")
+         --    trainer:train(trainDataset) -- train on dataset
+         --    trainer:resetIterationScheme()
 
-            -- calculate accuracy on test
-            -- persist current model
-         end
+         --    -- calculate accuracy on test
+         --    -- persist current model
+         -- end
 
       end
    end
