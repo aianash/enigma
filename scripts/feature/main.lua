@@ -342,7 +342,6 @@ do
    local batchSize = 2
 
    local targetModeldir = './feature-models'
-
    --[[ End Config ]]--
 
    -- local models = require 'scripts.feature.models'
@@ -362,17 +361,32 @@ do
          -- Dummy code for testing CMFA model
          local CMFA = require 'scripts.feature.cmfa'
 
+         local outputVectorSize = 2304
+         local datasetSize = 1000
+         local inputVectorSize = 256
+         local factorVectorSize = 20
+
          local model = CMFA:new{
-            batchSize = 100,
+            batchSize = 250,
             numComponents = 3,
-            outputVectorSize = 1024,
-            factorVectorSize = 20,
-            inputVectorSize = 100,
-            datasetSize = 1000
+            outputVectorSize = outputVectorSize, -- 100, --4096, -- 32 x 32 output image
+            factorVectorSize = factorVectorSize,
+            inputVectorSize = inputVectorSize, -- 16 x 16 inout image
+            datasetSize = datasetSize
          }
 
-         model:train(torch.randn(1024, 1000), torch.randn(100, 1000), 1)
+         local X_star = torch.randn(datasetSize, inputVectorSize)
+         local Y = torch.Tensor(datasetSize, outputVectorSize)
+         local G = torch.randn(outputVectorSize, inputVectorSize)
+         local L = torch.randn(outputVectorSize, factorVectorSize)
 
+         for i = 1, datasetSize do
+            local z = torch.zeros(factorVectorSize)
+            z[i % factorVectorSize + 1] = 1
+            Y[i] = torch.randn(outputVectorSize) + G * X_star[i] + L * z
+         end
+
+         model:train(Y:t(), X_star:t(), 1)
 
          -- local gC, gH, gW = trainDataset:size(3), trainDataset:size(4), trainDataset:size(5)
 
