@@ -92,9 +92,9 @@ function VBCMFA:__init(cfg)
 
    self.hidden = {
       Zm = torch.randn(s, k, n),
-      Zcov = torch.zeros(s, k, k),
+      Zcov = torch.eye(k, k):repeatTensor(s, 1, 1),
 
-      Qs = torch.randn(n, s),
+      Qs = torch.ones(n, s) / s,
       phim = torch.randn(s),
 
       getZ = function(self)
@@ -108,7 +108,7 @@ function VBCMFA:__init(cfg)
 
    self.conditional = {
       Xm = torch.randn(s, f, n),
-      Xcov = torch.randn(s, n, f, f),
+      Xcov = torch.eye(f, f):repeatTensor(s, n, 1, 1),
 
       getX = function(self)
          return self.Xm, self.Xcov
@@ -144,7 +144,7 @@ function VBCMFA:__init(cfg)
       alpha_star = 1,
       beta_star = 1,
 
-      E_starI = torch.randn(n, f, f),
+      E_starI = torch.eye(f, f):repeatTensor(n, 1, 1), -- torch.randn(n, f, f),
 
       phi_star = 1,
 
@@ -161,7 +161,7 @@ function VBCMFA:__init(cfg)
    self._sizeofS = torch.randn(s)
    self.removal = cfg.removal
 
-   -- self:initparams()
+   print("finish init")
 end
 
 --
@@ -212,7 +212,7 @@ function VBCMFA:inferQL(Y) -- p x n
    for t = 1, s do
       local Zmt = Zm[t] -- k x n
       local Qst = Qs[{ {}, t }]
-      local kQst = Qst:repeatTensor(k, 1) -- k x n
+      local kQst = Qst:contiguous():view(1, n):expand(k, n) -- -- k x n
       local ZmtkQst = torch.cmul(Zmt, kQst) -- k x n
 
       local nY = Y - Gm[t] * Xm[t] -- p x n
@@ -288,9 +288,8 @@ function VBCMFA:inferQG(Y)
       local Xmt = Xm[t] -- f x n
       local Xcovt = Xcov[t] -- n x f x f
       local Qst = Qs[{ {}, t }] -- n
-      local fQst = Qst:repeatTensor(f, 1) -- f x n
-      -- print(Xmt)
-      -- print(fQst)
+
+      local fQst = Qst:contiguous():view(1, n):expand(f, n) -- f x n
       local XmtfQst = torch.cmul(Xmt, fQst) -- f x n
 
       local nY = Y - Lm[t] * Zm[t] -- p x n
@@ -300,9 +299,19 @@ function VBCMFA:inferQG(Y)
       local QstExxT = EXcovtQs + Xmt * XmtfQst:t() -- f x f
       local alpha_betat = torch.div(beta[t], alpha):pow(-1) -- f
 
+      -- Much faster version using approximation for inverse
+      -- But this doesnt create positive definite Gcov matrix
+      -- So be careful !!
+      --
+      -- local QstExxTI = torch.inverse(QstExxT) -- f x f
+      -- local AIBAI = QstExxTI * torch.diag(alpha_betat) * QstExxTI -- f x f
+      -- for q = 1, p do
+      --    Gcov[t][q] = QstExxTI / PsiI[q] - AIBAI
+      --    Gm[t][q]:mv(Gcov[t][q], PsiInYXmtfQstT[q]) -- f x f * f x 1 = f x 1
+      -- end
       for q = 1, p do
-         torch.inverse(Gcov[t][q], torch.diag(alpha_betat) + QstExxT * PsiI[q]) -- inv{ k x k + 1 * k x k }
-         Gm[t][q]:mv(Gcov[t][q], PsiInYXmtfQstT[q]) -- k x k * k x 1 = k x 1
+         torch.inverse(Gcov[t][q], torch.diag(alpha_betat) + QstExxT * PsiI[q]) -- inv{ f x f + f x f * 1 }
+         Gm[t][q]:mv(Gcov[t][q], PsiInYXmtfQstT[q]) -- f x f * f x 1 = f x 1
       end
    end
 end
@@ -329,7 +338,7 @@ function VBCMFA:inferQX(Y, X_star) -- f x n
 
       local E_starIEGTPsiIG_split = (E_starI + EGTPsiIG:view(1, f, f):expand(n, f, f)):split(1) -- n x f x f, expand doesn't allocate new memory
       for i, XcovtiI in ipairs(E_starIEGTPsiIG_split) do
-         Xcovt[i] = torch.inverse(XcovtiI:squeeze()) -- f x f
+         torch.inverse(Xcovt[i], XcovtiI:squeeze()) -- f x f
       end
 
       local X_star3D = X_star:view(f, n, 1):transpose(1, 2) -- n x f x 1
@@ -340,7 +349,7 @@ function VBCMFA:inferQX(Y, X_star) -- f x n
       local GmtTPsiInY = GmtTPsiI * nY -- f x n
 
       Xm[t] = torch.bmm(Xcovt, E_starIX_star3D + GmtTPsiInY:t()):squeeze():t() -- f x n
-      --               n x [ f x f * f x 1 ] = n x f x 1
+      --             n x [ f x f * f x 1 ] = n x f x 1
    end
 end
 
@@ -355,7 +364,7 @@ function VBCMFA:inferQomega()
       local Gmt = Gm[t] -- p x f
       local Gcovt = Gcov[t] -- p x f x f
       local EL_sqr = torch.diag(torch.sum(Gcovt, 1)[1]) + torch.sum(torch.pow(Gmt, 2), 1)[1] -- f
-      beta[t] = torch.ones(f) * beta_star+ EL_sqr * 0.5
+      beta[t] = torch.ones(f) * beta_star + EL_sqr * 0.5
    end
 end
 
@@ -380,8 +389,8 @@ function VBCMFA:inferQs(Y, calc)
       local Zmt = Zm[t] -- k x n
       local Lmt = Lm[t] -- p x k
       local Gmt = Gm[t] -- p x f
-      local Lcovt = Lcov[t]
-      local Gcovt = Gcov[t]
+      local Lcovt = Lcov[t] -- p x k x k
+      local Gcovt = Gcov[t] -- p x f x f
       local Zcovt = Zcov[t] -- k x k
       local Xcovt = Xcov[t] -- n x f x f
       local PsiI_M = torch.diag(PsiI) -- p x p
@@ -409,10 +418,9 @@ function VBCMFA:inferQs(Y, calc)
 
       logQst:add( - torch.sum(torch.cmul(Y, PsiInY), 1) * 0.5 -- 1 x n automatically converted to n x 1 while assignment
                   - EzTLTPsiIGx
-                  - EzTLTPsiILz
-                  - ExTGTPsiIGx
+                  - EzTLTPsiILz * 0.5
+                  - ExTGTPsiIGx * 0.5
                   + torch.sum(torch.log(torch.diag(torch.potrf(Zcovt, 'U')))))
-
    end
 
    logQs:add(cephes.digamma(phim):float():view(1, s):expand(n, s))
@@ -459,17 +467,17 @@ function VBCMFA:inferPsiI(Y)
       local Lmt = Lm[t]
       local Gmt = Gm[t]
 
-      local kQst = Qst:repeatTensor(k, 1) -- k x n
+      local kQst = Qst:contiguous():view(1, n):expand(k, n) -- -- k x n
       local EzzT = Zcov[t] * torch.sum(Qst) + Zmt * torch.cmul(Zmt, kQst):t() -- k x k
 
-      local fQst = Qst:repeatTensor(f, 1) -- f x n
+      local fQst = Qst:contiguous():view(1, n):expand(f, n) -- -- f x n
       local EXcovtQs = torch.view(torch.view(Xcovt, n, f * f):t() * Qst, f, f) -- f x f
       local ExxT = EXcovtQs + Xmt * torch.cmul(Xmt, fQst):t() -- f x f
 
       local EzxT = Zmt * torch.cmul(Xmt, fQst):t() -- k x f
       local ELzxTGT = Lmt * EzxT * Gmt:t() -- p x p
 
-      local pQst = Qst:repeatTensor(p, 1) -- p x n
+      local pQst = Qst:contiguous():view(1, n):expand(p, n) -- -- p x n
       local YpQst = torch.cmul(pQst, Y) -- p x n
 
       local partialPsi = YpQst * (Y - Lmt * Zmt * 2 - Gmt * Xmt * 2):t() -- 2 times because ultimately we
