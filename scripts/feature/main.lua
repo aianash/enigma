@@ -361,18 +361,20 @@ do
          -- Dummy code for testing CMFA model
          local CMFA = require 'scripts.feature.cmfa'
 
-         local outputVectorSize = 2304
-         local datasetSize = 1000
-         local inputVectorSize = 256
-         local factorVectorSize = 20
+         local outputVectorSize = 25
+         local datasetSize = 20
+         local inputVectorSize = 16
+         local factorVectorSize = 4
 
          local model = CMFA:new{
-            batchSize = 250,
-            numComponents = 3,
+            batchSize = 20,
+            numComponents = 1,
             outputVectorSize = outputVectorSize, -- 100, --4096, -- 32 x 32 output image
             factorVectorSize = factorVectorSize,
             inputVectorSize = inputVectorSize, -- 16 x 16 inout image
-            datasetSize = datasetSize
+            datasetSize = datasetSize,
+            delay = 1,
+            forgettingRate = 0.6
          }
 
          local X_star = torch.randn(datasetSize, inputVectorSize)
@@ -383,11 +385,24 @@ do
          for i = 1, datasetSize do
             local z = torch.zeros(factorVectorSize)
             z[i % factorVectorSize + 1] = 1
-            Y[i] = torch.randn(outputVectorSize) + G * X_star[i] + L * z
+            Y[i] = G * X_star[i] + L * z + torch.randn(outputVectorSize)
          end
 
-         model:train(Y:t(), X_star:t(), 1)
+--          print(string.format([[
+-- ---------------------------
+-- Dataset
+-- ---------------------------
+-- L =
+-- %s
 
+-- G =
+-- %s
+-- ]], L, G))
+
+         local Gm, Lm = model:train(Y:t(), X_star:t(), 5)
+
+         print(torch.dist(Gm[1], G))
+         print(torch.dist(Lm[1], L))
          -- local gC, gH, gW = trainDataset:size(3), trainDataset:size(4), trainDataset:size(5)
 
          -- local featureSTM = models.newFeaturemodel()
