@@ -361,13 +361,13 @@ do
          -- Dummy code for testing CMFA model
          local CMFA = require 'scripts.feature.cmfa'
 
-         local outputVectorSize = 25
-         local datasetSize = 20
-         local inputVectorSize = 16
+         local outputVectorSize = 10
+         local datasetSize = 10
+         local inputVectorSize = 4
          local factorVectorSize = 4
 
          local model = CMFA:new{
-            batchSize = 20,
+            batchSize = 10,
             numComponents = 1,
             outputVectorSize = outputVectorSize, -- 100, --4096, -- 32 x 32 output image
             factorVectorSize = factorVectorSize,
@@ -385,7 +385,7 @@ do
          for i = 1, datasetSize do
             local z = torch.zeros(factorVectorSize)
             z[i % factorVectorSize + 1] = 1
-            Y[i] = G * X_star[i] + L * z + torch.randn(outputVectorSize)
+            Y[i] = G * X_star[i] + L * z + torch.ones(outputVectorSize)
          end
 
 --          print(string.format([[
