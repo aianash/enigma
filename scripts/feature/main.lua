@@ -362,12 +362,12 @@ do
          local CMFA = require 'scripts.feature.cmfa'
 
          local outputVectorSize = 10
-         local datasetSize = 10
+         local datasetSize = 20
          local inputVectorSize = 4
-         local factorVectorSize = 4
+         local factorVectorSize = 3
 
          local model = CMFA:new{
-            batchSize = 10,
+            batchSize = 20,
             numComponents = 1,
             outputVectorSize = outputVectorSize, -- 100, --4096, -- 32 x 32 output image
             factorVectorSize = factorVectorSize,
@@ -379,13 +379,19 @@ do
 
          local X_star = torch.randn(datasetSize, inputVectorSize)
          local Y = torch.Tensor(datasetSize, outputVectorSize)
-         local G = torch.randn(outputVectorSize, inputVectorSize)
-         local L = torch.randn(outputVectorSize, factorVectorSize)
+
+         local G1 = torch.randn(outputVectorSize, inputVectorSize)
+         local L1 = torch.randn(outputVectorSize, factorVectorSize) * 2
+
+         -- local G2 = torch.rand(outputVectorSize, inputVectorSize)
+         -- local L2 = torch.rand(outputVectorSize, factorVectorSize)
 
          for i = 1, datasetSize do
-            local z = torch.zeros(factorVectorSize)
-            z[i % factorVectorSize + 1] = 1
-            Y[i] = G * X_star[i] + L * z + torch.ones(outputVectorSize)
+            local z = torch.randn(factorVectorSize)
+
+            -- if i % 2 == 0 then
+               Y[i] = G1 * X_star[i] + L1 * z + torch.randn(outputVectorSize)
+            -- else Y[i] = G2 * X_star[i] + L2 * z + torch.randn(outputVectorSize) end
          end
 
 --          print(string.format([[
@@ -399,10 +405,20 @@ do
 -- %s
 -- ]], L, G))
 
-         local Gm, Lm = model:train(Y:t(), X_star:t(), 5)
+         local Gm, Gcov, Lm, Lcov = model:train(Y:t(), X_star:t(), 30)
 
-         print(torch.dist(Gm[1], G))
-         print(torch.dist(Lm[1], L))
+         print(Gm)
+         print(G1)
+
+         print(Gcov)
+
+         print(Lm)
+         print(L1)
+
+         print(Lcov)
+         print(torch.dist(Gm[1], G1))
+         print(torch.dist(Lm[1], L1))
+
          -- local gC, gH, gW = trainDataset:size(3), trainDataset:size(4), trainDataset:size(5)
 
          -- local featureSTM = models.newFeaturemodel()
