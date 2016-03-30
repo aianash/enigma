@@ -3,6 +3,8 @@ require 'image'
 require 'torch'
 require 'nnx'
 require 'enigma'
+require 'distributions'
+require 'gnuplot'
 
 pl.stringx.import()
 torch.setdefaulttensortype('torch.FloatTensor')
@@ -358,66 +360,205 @@ do
          local testDataset = torch.load(pl.path.join(featuredir, featurename.."-glimpses-test.bin"))
          local validationDataset = torch.load(pl.path.join(featuredir, featurename.."-glimpses-validation.bin")) -- [TO DO] test if present first
 
-         -- Dummy code for testing CMFA model
          local CMFA = require 'scripts.feature.cmfa'
 
-         local outputVectorSize = 10
-         local datasetSize = 20
-         local inputVectorSize = 4
-         local factorVectorSize = 3
+         local run = "exp1"
 
-         local model = CMFA:new{
-            batchSize = 20,
-            numComponents = 1,
-            outputVectorSize = outputVectorSize, -- 100, --4096, -- 32 x 32 output image
-            factorVectorSize = factorVectorSize,
-            inputVectorSize = inputVectorSize, -- 16 x 16 inout image
-            datasetSize = datasetSize,
-            delay = 1,
-            forgettingRate = 0.6
-         }
+         -- Dummy Experiment 1
+         if run == "exp1" then
+            -- generate dataset
+            function generate(n, p, k, f, Psi, offset)
+               local X_star = torch.Tensor(n, f)
+               local L = torch.randn(p, k)
+               local G = torch.randn(p, f)
+               local E_starI = torch.randn(f, f)
 
-         local X_star = torch.randn(datasetSize, inputVectorSize)
-         local Y = torch.Tensor(datasetSize, outputVectorSize)
+               local Cov = L * L:t() + G * E_starI * G:t() + Psi
+               local Y = torch.Tensor(n, p)
 
-         local G1 = torch.randn(outputVectorSize, inputVectorSize)
-         local L1 = torch.randn(outputVectorSize, factorVectorSize) * 2
+               local za = torch.rand(k)
+               local xa = torch.rand(f)
 
-         -- local G2 = torch.rand(outputVectorSize, inputVectorSize)
-         -- local L2 = torch.rand(outputVectorSize, factorVectorSize)
+               for i = 1, n do
+                  -- local x = distributions.dir.rnd(xa):float() + offset
+                  local x = torch.randn(f) + offset
+                  local z = distributions.dir.rnd(za):float()
+                  X_star[i] = x
+                  local mean = G * x + L * z
+                  Y[i] = distributions.mvn.rnd(mean, Cov)
+               end
 
-         for i = 1, datasetSize do
-            local z = torch.randn(factorVectorSize)
+               return Y:t(), X_star:t()
+            end
 
-            -- if i % 2 == 0 then
-               Y[i] = G1 * X_star[i] + L1 * z + torch.randn(outputVectorSize)
-            -- else Y[i] = G2 * X_star[i] + L2 * z + torch.randn(outputVectorSize) end
+            local N = 4000
+            local n = 1000
+            local s = N / n
+            local p = 2
+            local k = 1
+            local f = 1
+
+            local Y = torch.Tensor(p, N)
+            local X_star = torch.Tensor(f, N)
+
+            local Psi = torch.diag(torch.randn(p))
+
+            for batchIdx = 1, (N / n) do
+               y, x_star = generate(n, p, k, f, Psi, batchIdx * 3)
+               Y:narrow(2, (batchIdx - 1) * n + 1, n):copy(y)
+               X_star:narrow(2, (batchIdx - 1) * n + 1, n):copy(x_star)
+            end
+
+            local model = CMFA:new{
+               batchSize = N, -- no batch
+               numComponents = 3,
+               outputVectorSize = p,
+               factorVectorSize = k,
+               inputVectorSize = f,
+               datasetSize = N,
+               delay = 1,
+               forgettingRate = 0.6
+            }
+
+            local Gm, Gcov, Lm, Lcov, Zm, Xm, Qs = model:train(Y, X_star, 12)
+
+            local N1 = 0
+            local N2 = 0
+            local N3 = 0
+
+            for i = 1, N do
+               local qs = Qs[i]
+               local s
+               if qs[1] >= qs[2] and qs[1] >= qs[3] then N1 = N1 + 1
+               elseif qs[2] >= qs[1] and qs[2] >= qs[3] then N2 = N2 + 1
+               else N3 = N3 + 1 end
+            end
+
+            local Y1new = torch.zeros(p, N1)
+            local X1 = torch.Tensor(f, N1)
+
+            local Y2new = torch.zeros(p, N2)
+            local X2 = torch.Tensor(f, N2)
+
+            local Y3new = torch.zeros(p, N3)
+            local X3 = torch.Tensor(f, N3)
+
+            local i1 = 1
+            local i2 = 1
+            local i3 = 1
+
+            for i = 1, N do
+               local qs = Qs[i]
+               local s
+               if qs[1] >= qs[2] and qs[1] >= qs[3] then s = 1
+               elseif qs[2] >= qs[1] and qs[2] >= qs[3] then s = 2
+               else s = 3 end
+
+               z = Zm[{s, {}, i}]
+               x = Xm[{s, {}, i}]
+
+               if s == 1 then
+                  Y1new[{ {}, i1 }] = Lm[s] * z + Gm[s] * x
+                  X1[{ {}, i1 }] = X_star[{ {}, i }]
+                  i1 = i1 + 1
+               elseif s == 2 then
+                  Y2new[{ {}, i2 }] = Lm[s] * z + Gm[s] * x
+                  X2[{ {}, i2 }] = X_star[{ {}, i }]
+                  i2 = i2 + 1
+               else
+                  Y3new[{ {}, i3 }] = Lm[s] * z + Gm[s] * x
+                  X3[{ {}, i3 }] = X_star[{ {}, i }]
+                  i3 = i3 + 1
+               end
+            end
+
+            gnuplot.figure(1)
+            gnuplot.scatter3({'true', Y[1], Y[2], X_star:squeeze()})
+
+            gnuplot.figure(2)
+            gnuplot.scatter3({'predicted1', Y1new[1], Y1new[2], X1:squeeze()},
+               {'predicted2', Y2new[1], Y2new[2], X2:squeeze()})
+
+            gnuplot.figure(3)
+            gnuplot.scatter3({'predicted2', Y2new[1], Y2new[2], X2:squeeze()},
+               {'predicted3', Y3new[1], Y3new[2], X3:squeeze()})
+
+            gnuplot.figure(4)
+            gnuplot.scatter3({'predicted3', Y3new[1], Y3new[2], X3:squeeze()},
+               {'predicted1', Y1new[1], Y1new[2], X1:squeeze()})
+
+            gnuplot.figure(5)
+            gnuplot.scatter3({'predicted1', Y1new[1], Y1new[2], X1:squeeze()},
+                            {'predicted2', Y2new[1], Y2new[2], X2:squeeze()},
+                            {'predicted3', Y3new[1], Y3new[2], X3:squeeze()})
+
+            io.read()
          end
 
---          print(string.format([[
--- ---------------------------
--- Dataset
--- ---------------------------
--- L =
--- %s
 
--- G =
--- %s
--- ]], L, G))
+         -- Dummy experitment 2
+         if run == "exp2" then
+            local outputVectorSize = 50
+            local datasetSize = 400
+            local inputVectorSize = 10
+            local factorVectorSize = 8
+            local numComponents = 2
 
-         local Gm, Gcov, Lm, Lcov = model:train(Y:t(), X_star:t(), 30)
+            local model = CMFA:new{
+               batchSize = 400,
+               numComponents = numComponents,
+               outputVectorSize = outputVectorSize,
+               factorVectorSize = factorVectorSize,
+               inputVectorSize = inputVectorSize, -- 16 x 16 inout image
+               datasetSize = datasetSize,
+               delay = 1,
+               forgettingRate = 0.6
+            }
 
-         print(Gm)
-         print(G1)
+            local X_star = torch.randn(datasetSize, inputVectorSize)
 
-         print(Gcov)
+            local Y = torch.Tensor(datasetSize, outputVectorSize)
 
-         print(Lm)
-         print(L1)
+            local G1 = torch.rand(outputVectorSize, inputVectorSize) * 20
+            local L1 = torch.rand(outputVectorSize, factorVectorSize) * 20
 
-         print(Lcov)
-         print(torch.dist(Gm[1], G1))
-         print(torch.dist(Lm[1], L1))
+            local G2 = torch.rand(outputVectorSize, inputVectorSize)
+            local L2 = torch.rand(outputVectorSize, factorVectorSize)
+
+            for i = 1, datasetSize do
+               local z = torch.randn(factorVectorSize)
+
+               if i % 3 == 0 then
+                  Y[i] = G1 * X_star[i] + L1 * z + torch.randn(outputVectorSize)
+               else Y[i] = G2 * X_star[i] + L2 * z + torch.randn(outputVectorSize) end
+            end
+
+            print(string.format([[
+   ---------------------------
+   Dataset
+   ---------------------------
+   L =
+   %s
+
+   G =
+   %s
+   ]], L, G))
+
+            local Gm, Gcov, Lm, Lcov = model:train(Y:t(), X_star:t(), 30)
+
+            print(Gm)
+            -- print(G1)
+
+            print(Gcov)
+
+            print(Lm)
+            -- print(L1)
+
+            print(Lcov)
+            print(torch.dist(Gm[1], G1))
+            print(torch.dist(Lm[1], L1))
+         end
+
 
          -- local gC, gH, gW = trainDataset:size(3), trainDataset:size(4), trainDataset:size(5)
 
