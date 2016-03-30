@@ -42,7 +42,7 @@ function VBCMFA:__init(cfg)
 
    self.conditional = {
       Xm = torch.randn(s, d, n),
-      Xcov = torch.eye(d, d):repeatTensor(s, n, 1, 1),
+      Xcov = torch.eye(d, d):repeatTensor(s, 1, 1),
 
       getX = function(self)
          return self.Xm, self.Xcov
@@ -73,7 +73,7 @@ function VBCMFA:__init(cfg)
 
    self.hyper = {
       mu_star = torch.ones(d, n) / d,
-      sigma_star = torch.eye(d, d):repeatTensor(n, 1, 1),
+      sigma_star = torch.eye(d, d),
 
       a_star = 1,
       b_star = 1,
@@ -146,7 +146,7 @@ function VBCMFA:inferQs(Pti, Mu)
       local EGTPsiIG = torch.view(torch.view(Gcovs, p, d * d):t() * PsiI, d, d) -- d x d
                      + Gms:t() * PsiI_M * Gms
       local ExTGTPsiIGx = torch.sum(torch.cmul(Xms, EGTPsiIG * Xms), 1) -- 1 x n
-                        + torch.view(Xcovs, n, d * d) * torch.view(EGTPsiIG:t():contiguous(), d * d, 1) -- n x 1
+                        + (torch.view(Xcovs, 1, d * d) * torch.view(EGTPsiIG:t():contiguous(), d * d, 1)):squeeze() -- 1
 
       local ELz = Lms * Zms  -- p x n
       local EGx = Gms * Xms  -- p x n
@@ -154,13 +154,10 @@ function VBCMFA:inferQs(Pti, Mu)
       local MuDiff = Mu - (ELz * 2 + EGx * 2):view(1, p, n):expand(sn, p, n)  -- sn x p x n
       local PtiMuTPsiI = torch.bmm(PsiI_M:view(1, p, p):expand(sn, p, p), torch.cmul(pPti, Mu))  -- sn x p x n
 
-      for j = 1, n do
-         logQss[j] = torch.sum(torch.log(torch.diag(torch.potrf(Xcovs[j], 'U'))))
-      end
-
-      logQss:add( - torch.cmul(PtiMuTPsiI, MuDiff):sum(1):sum(2):view(1, n) * 0.5
-                  - EzTLTPsiIGx - EzTLTPsiILz * 0.5 - ExTGTPsiIGx * 0.5
-                  + torch.sum(torch.log(torch.diag(torch.potrf(Zcovs, 'U')))))
+      logQss = - torch.cmul(PtiMuTPsiI, MuDiff):sum(1):sum(2):view(1, n) * 0.5
+               - EzTLTPsiIGx - EzTLTPsiILz * 0.5 - ExTGTPsiIGx * 0.5
+               + torch.sum(torch.log(torch.diag(torch.potrf(Zcovs, 'U'))))
+               + torch.sum(torch.log(torch.diag(torch.potrf(Xcovs, 'U'))))
    end
 
    logQs:add(cephes.digamma(phim):float():view(1, S):expand(n, S))
@@ -183,27 +180,14 @@ function VBCMFA:inferPsiI(Pti, Mu)
    local Qs, phim = self.hidden:getS()
    local PsiI = self.hyper.PsiI
 
-   local EMu = torch.zeros(p, n)
-   local EMuMuT = torch.zeros(p, p)
-
    local psi = torch.zeros(p, p)
    local sn = Pti:size(2)
-
-   for i = 1, sn do
-      local resp = Pti[{{}, i}]  -- n x 1
-      local Mui = Mu[i]  -- p x n
-      local respMui = torch.cmul(resp:contiguous():view(1, n):repeatTensor(p, 1), Mui)  -- p x n
-      local MuMuT_N = respMui * Mui:t()  -- p x p
-
-      EMuMuT = EMuMuT + MuMuT_N  -- p x p
-      EMu = EMu + respMui  -- p x n
-   end
+   local pPti = torch.view(Pti, 1, sn, n):expand(p, sn, n):permute(2, 1, 3)  -- sn x p x n
 
    for i = 1, s do
       local Qsi = Qs[{ {}, i }]  -- n x 1
       local Zmi = Zm[i]  -- k x n
       local Xmi = Xm[i]  -- d x n
-      local Xcovi = Xcov[i] -- n x d x d
       local Lmi = Lm[i]  -- p x k
       local Gmi = Gm[i]  -- p x d
 
@@ -211,13 +195,20 @@ function VBCMFA:inferPsiI(Pti, Mu)
       local EzzT = Zcov[i] * torch.sum(Qsi) + Zmi * torch.cmul(Zmi, kQsi):t()  -- k x k
 
       local dQsi = Qsi:repeatTensor(d, 1)  -- d x n
-      local EXcoviQs = torch.view(torch.view(Xcovi, n, d * d):t() * Qsi, d, d)  -- d x d
-      local ExxT = EXcoviQs + Xmi * torch.cmul(Xmi, dQsi):t()  -- d x d
+      local ExxT = Xcov[i] * torch.sum(Qsi) + Xmi * torch.cmul(Xmi, dQsi):t()  -- d x d
 
       local EzxT = torch.cmul(Zmi, kQsi) * Xmi:t()  -- k x d
       local ELzxTGT = Lmi * EzxT * Gmi:t()  -- p x p
 
-      local partialPsi = EMuMuT - EMu * (Zmi:t() * Lmi:t() - Xmi:t() * Gmi:t()) * 2
+      local ELz = Lmi * Zmi  -- p x n
+      local EGx = Gmi * Xmi  -- p x n
+
+      local MuDiff = Mu - (ELz * 2 + EGx * 2):view(1, p, n):expand(sn, p, n)  -- sn x p x n
+      local MuPt = torch.cmul(Mu, pPti)  -- sn x p x n
+
+      local EMuPtMuDiffT = torch.bmm(MuPt, MuDiff:transpose(2, 3)):sum(1):view(p, p)  -- p x p
+
+      local partialPsi = EMuPtMuDiffT
                        + Lmi * EzzT * Lmi:t()
                        + Gmi * ExxT * Gmi:t()
                        + ELzxTGT * 2
@@ -265,10 +256,12 @@ function VBCMFA:inferQx(Pti, Mu)
       local EGTLG = torch.reshape(Gcovs:reshape(p, d * d):t() * PsiI, d, d) + GmPsiI * Gms  -- d x d
       local GmPsiIPtiMu = Gms:t() * torch.diag(PsiI) * (PtiMu - Lm[s] * Zm[s])  -- d x n
 
+      -- covariance
+      local sigma_starI = torch.inverse(sigma_star)  -- d x d
+      Xcovs = torch.inverse(sigma_starI + EGTLG)  -- d x d
+
       for j = 1, n do
-         local sigma_starjI = torch.inverse(sigma_star[j])  -- d x d
-         Xcovs[j] = torch.inverse(sigma_starjI + EGTLG)  -- d x d
-         Xms[{{}, j}] = Xcovs[j] * (sigma_starjI * mu_star[{{}, j}] + GmPsiIPtiMu[{{}, j}])  -- d x 1
+         Xms[{{}, j}] = Xcovs * (sigma_starI * mu_star[{{}, j}] + GmPsiIPtiMu[{{}, j}])  -- d x 1
       end
    end
 end
@@ -288,14 +281,8 @@ function VBCMFA:inferHyperX()
    local mu_starT = torch.bmm(Xm:permute(3, 2, 1), Qs:reshape(n, S, 1))  -- n x d x 1
    mu_star = mu_starT:reshape(n, d):t()  -- d x n
 
-   local E_XXT = torch.bmm(Xcov:permute(2, 1, 3, 4):reshape(n, S, d * d):permute(1, 3, 2), Qs:reshape(n, S, 1)):reshape(n, d, d)  -- n x d x d
-   local E_XMUT = torch.bmm(mu_starT, mu_starT:permute(1, 3, 2))  -- n x d x d
-
-   sigma_star = E_XXT - E_XMUT  -- n x d x d
-
-   for i = 1, n do
-      torch.inverse(sigma_star[i], sigma_star[i])
-   end
+   local XcovQs = Xcov:view(S, d * d):t() * Qs:sum(1):t() / n  -- d*d x 1
+   sigma_star = torch.inverse(XcovQs:view(d, d))
 end
 
 
@@ -327,9 +314,8 @@ function VBCMFA:inferQG(Pti, Mu)
       local Gcovs = Gcov[s]
       local Gms = Gm[s]
 
-      local EXmQs = torch.cmul(Xms, torch.repeatTensor(Qss:contiguous():view(1, n), k, 1)) -- d x n
-      local EXcovQs = torch.reshape(torch.reshape(Xcovs, n, d * d):t() * Qss, d, d) -- d x d
-      local QsXXT = EXcovQs + Xms * EXmQs:t()
+      local EXmQs = torch.cmul(Xms, torch.repeatTensor(Qss:contiguous():view(1, n), d, 1)) -- d x n
+      local QsXXT = Xcovs * torch.sum(Qss) + Xms * EXmQs:t()
       local betas = beta[s]
       local EOmega = torch.diag(betas:pow(-1) * alpha)
       local PsiIYQsXmi = torch.diag(PsiI) * (PtiMu - Lm[s] * Zm[s]) * EXmQs:t()

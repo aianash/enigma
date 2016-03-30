@@ -7,7 +7,7 @@ N = 10
 p = 2
 s = 2
 k = 3
-d = 3
+d = 4
 
 local cfg = {
    batchSize = n,
