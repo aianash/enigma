@@ -38,11 +38,9 @@ function CMFA:train(Y, X_star, epochs)
    -- Xm is treated especially,
    -- to enable carry forward accross epoch
    -- initialize it with X_star ie the input
-   local Xm_N = X_star:repeatTensor(s, 1, 1)
-   local Xcov_N = torch.eye(f, f):repeatTensor(s, N, 1, 1)
-   local Zm_N = torch.ones(s, k, N) / k
+   local Xm_N = X_star:repeatTensor(s, 1, 1) --torch.randn(f, n):repeatTensor(s, 1, 1)
+   local Zm_N = torch.randn(s, k, N)
    local Qs_N = torch.ones(N, s) / s
-   local E_starI_N = torch.eye(f, f):repeatTensor(N, 1, 1)
 
    local bStart
 
@@ -63,8 +61,8 @@ function CMFA:train(Y, X_star, epochs)
          -- for each batch
          print(string.format([[
 ---------------------------------
-Convergence iteration number = %d
----------------------------------]], itr))
+Epoch %d's Convergence iteration number = %d
+---------------------------------]], epoch, itr))
          -- print(Xcov_N[{ {}, 1, {}, {} }])
 
          -- local Xm_N_P = Xm_N:index(3, permutation)
@@ -74,6 +72,8 @@ Convergence iteration number = %d
          -- local E_starI_N_P = E_starI_N:index(1, permutation)
 
          -- for batchIdx, batch in ipairs(batches) do
+         self._sizeofS = torch.zeros(s)
+
          for batchIdx = 1, (N / n) do
             print(string.format([[
 Training batch %d
@@ -87,10 +87,9 @@ Training batch %d
             X_starbatch:copy(X_star:narrow(2, (batchIdx - 1) * n + 1, n)) -- :copy(X_star:index(2, batch))
 
             self.conditional.Xm = Xm_N:narrow(3, (batchIdx - 1) * n + 1, n)
-            self.conditional.Xcov = Xcov_N:narrow(2, (batchIdx - 1) * n + 1, n)
             self.hidden.Zm = Zm_N:narrow(3, (batchIdx - 1) * n + 1, n)
             self.hidden.Qs = Qs_N:narrow(1, (batchIdx - 1) * n + 1, n)
-            self.hyper.E_starI = E_starI_N:narrow(1, (batchIdx - 1) * n + 1, n)
+            -- self.hyper.E_starI = E_starI_N:narrow(1, (batchIdx - 1) * n + 1, n)
             self:rho(batchIdx)
 
             print(string.format("rho = %f\n", self:rho()))
@@ -100,7 +99,6 @@ Training batch %d
 
             if debug then
                self.old.Xm = self.conditional.Xm:clone()
-               self.old.Xcov = self.conditional.Xcov:clone()
                self.old.Zm = self.hidden.Zm:clone()
                self.old.Zcov = self.hidden.Zcov:clone()
                self.old.Lm = self.factorLoading.Lm:clone()
@@ -110,24 +108,28 @@ Training batch %d
             end
 
             -- Fixed point convergence
-            for citr = 1, 10 do
-               for citr2 = 1, 10 do
-                  self:infer("QZ", pause, debug, Ybatch)
-                  self:infer("QX", pause, true, Ybatch, X_starbatch)
+            for citr = 1, 5 do
+               for citr = 1, 5 do
+                  for citr2 = 1, 10 do
+                     self:infer("QZ", pause, debug, Ybatch)
+                     self:infer("QX", pause, debug, Ybatch, X_starbatch)
+                  end
+
+                  for citr3 = 1, 10 do
+                     self:infer("QL", pause, debug, Ybatch)
+                     self:infer("QG", pause, debug, Ybatch)
+                     self:infer("Qnu", pause, debug)
+                     self:infer("Qomega", pause, debug)
+                  end
                end
 
-               for citr3 = 1, 10 do
-                  self:infer("QL", pause, debug, Ybatch)
-                  self:infer("QG", pause, debug, Ybatch)
-               end
-
-               for citr = 1, 10 do
-                  self:infer("Qnu", pause, debug)
-                  self:infer("Qomega", pause, debug)
-               end
-
-               for citr = 1, 10 do
+               -- for citr = 1, 10 do
+               -- end
+               for citr = 1, 5 do
                   self:infer("Qpi", pause, debug)
+               end
+
+               for citr = 1, 5 do
                   self:infer("Qs", pause, debug, Ybatch)
                end
 
@@ -136,12 +138,16 @@ Training batch %d
                      self:infer("PsiI", pause, debug, Ybatch)
                   end
 
-                  for ctr = 1, 20 do
-                     self:infer("E_starI", pause, true, X_starbatch)
-                  end
-                  io.read()
+                  -- for ctr = 1, 10 do
+                  --    self:infer("E_starI", pause, debug, X_starbatch)
+                  -- end
                end
             end
+
+            -- self:infer("Qs", pause, debug, Ybatch, true)
+
+            self._sizeofS:add(self.hidden.Qs:sum(1))
+            print(string.format("sizeOfS %s", self._sizeofS))
 
             if debug then
                self:pr("Zm", "hidden", pause)
@@ -158,14 +164,16 @@ Training batch %d
             pause = false
             debug = false
 
-
             if debug then self.old.E_starI = self.hyper.E_starI:clone() end
-            for ctr = 1, 1 do
-               -- self:infer("E_starI", pause, debug, X_starbatch)
-            end
+            -- for ctr = 1, 10 do
+            --    self:infer("E_starI", pause, debug, X_starbatch)
+            -- end
             if debug then self:pr("E_starI", "hyper", pause) end
 
-            self:calcF()
+            local F, dF = self:calcF(debug, Ybatch, X_starbatch)
+
+            print(self.factorLoading.Gm)
+            print(string.format("F = %f \t dF = %f", F, dF))
 
             if pause then io.read() end
          end
@@ -176,22 +184,21 @@ Training batch %d
          -- Qs_N:indexCopy(1, permutation, Qs_N_P)
          -- E_starI_N:indexCopy(1, permutation, E_starI_N_P)
 
-         -- print(Xcov_N)
       end
 
       if not self:doremoval() then self:dobirth() end -- either perform removal
                                                       -- or birth
    end
 
-   return self.factorLoading.Gm, self.factorLoading.Lm
+   return self.factorLoading.Gm, self.factorLoading.Gcov, self.factorLoading.Lm, self.factorLoading.Lcov
 end
 
 function CMFA:infer(tr, pause, ...)
    local c = os.clock()
-   print(string.format("\n== Infer %s ==", tr))
+   -- print(string.format("\n== Infer %s ==", tr))
    self["infer"..tr](self, ...)
-   print(string.format("%s\t= %f", tr, os.clock() - c))
-   print("------------------------------------------")
+   -- print(string.format("%s\t= %f", tr, os.clock() - c))
+   -- print("------------------------------------------")
    if pause then io.read() end
 end
 
