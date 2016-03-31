@@ -1,6 +1,7 @@
 ----------------------------------------------------------
 -- conditional mixture of factor analyser
 ----------------------------------------------------------
+require 'gnuplot'
 
 local VBCMFA = require 'VBCMFA'
 
@@ -23,20 +24,21 @@ end
 function CFMA:__init(cfg)
    self.debug = cfg.debug
    self.pause = cfg.pause
+   self.Fhist = torch.Tensor(1):fill(-1 / 0)
    parent:__init(cfg)
 end
 
 
 -- Mu  means of factor analyzers of intent
 -- Pti responsibilities
-function CFMA:train(Mu, Pti, epochs)
+function CFMA:train(Mu, Pti, X_star, epochs)
    local n, s, p, k, d, N = self:_setandgetDims()
 
    for epoch = 1, epochs do
       for subEpoch = 1, 10 do
          self:infer("Qz", Pt, Y)
          self:infer("HyperX", pause)
-         self:infer("Qx", Pt, Y)
+         self:infer("Qx", Pt, Y, X_star)
       end
 
       for subEpoch = 1, 10 do
@@ -52,16 +54,13 @@ function CFMA:train(Mu, Pti, epochs)
       for subEpoch = 1, 10 do
          self:infer("Qpi")
          self:infer("Qs", Pt, Y)
-         t = os.clock()
-         self:inferQs(Pt, Y)
-         print(string.format("Qs\t= %f", os.clock() - t))
       end
 
       for subEpoch = 1, 10 do
          self:infer("PsiI", Pt, Y)
       end
 
-      if self.debug then
+      if self.debug == 1 then
          self:print("Zm", "hidden")
          self:print("Zcov", "hidden")
          self:print("Xm", "conditional")
@@ -72,17 +71,30 @@ function CFMA:train(Mu, Pti, epochs)
          self:print("Gcov", "factorLoading")
       end
 
+      local F, dF = self:calcF(self.debug, Y, Pt, X_star)
+      self.Fhist = self.Fhist:cat(torch.Tensor({F}))
+
       collectgarbage()
    end
+
+   self:plotFhist()
+end
+
+
+function CFMA:plotFhist()
+   gnuplot.figure()
+   gnuplot.plot(self.Fhist)
+   gnuplot.xlabel("Epochs")
+   gnuplot.ylabel("Lower Bound F")
 end
 
 
 function CFMA:infer(tr, ...)
    local t = os.clock()
-   print(string.format("\n===== Infer%s =====\n", tr))
+   -- print(string.format("\n===== Infer%s =====\n", tr))
    self["infer"..tr](self, ...)
-   print(string.format("\tt for %s = %f", tr, os.clock() - t))
-   print("--------------------------------------------------")
+   -- print(string.format("\tt for %s = %f", tr, os.clock() - t))
+   -- print("--------------------------------------------------")
    if self.pause == 1 then io.read() end
 end
 
