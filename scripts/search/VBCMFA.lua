@@ -1,5 +1,6 @@
 require 'torch'
 require 'cephes'
+require 'distributions'
 
 torch.setdefaulttensortype('torch.FloatTensor')
 
@@ -92,6 +93,7 @@ function VBCMFA:__init(cfg)
 
    self.Fmatrix = torch.zeros(9, s)
    self.F = - 1 / 0
+   self.hardness = 1 -- cfg.hardness
 end
 
 
@@ -585,6 +587,136 @@ function VBCMFA:calcF(debug, Mu, Pti, X_star) -- p x n, f x n
 end
 
 
+---------------------------------------------
+-- Pti : n x sn
+-- Mu  : sn x p x n
+---------------------------------------------
+function VBCMFA:doBirth(parent, Mu, Pt)
+   local n, s, p, k, d = self:_setandgetDims()
+
+   self.s = self.s + 1
+   local s = self.s
+
+   local sn = Pt:size(2)
+
+   local Lm, Lcov, _, b = self.factorLoading:getL()
+   local Gm, Gcov, _, beta = self.factorLoading:getG()
+   local Xm, Xcov = self.conditional:getX()
+   local Zm, Zcov = self.hidden:getZ()
+   local Xm, Xcov = self.conditional:getX()
+   local Qs, phim = self.hidden:getS()
+   local PsiI = self.hyper.PsiI
+
+   local Lmp, Lcovp = Lm[parent], Lcov[parent]
+   local Gmp, Gcovp = Gm[parent], Gcov[parent]
+   local Xmp, Xcovp = Xm[parent], Xcov[parent]
+   local Zmp, Zcovp = Zm[parent], Zcov[parent]
+   local Qsp = Qs[{{}, parent}]
+
+
+   local pPti = Pt:view(1, sn, n):expand(p, sn, n):permute(2, 1, 3)  -- sn x p x n
+
+   local EGxs = Gmp * Xmp  -- p x n
+   local MuDiff = Mu - EGxs:view(1, p, n):expand(sn, p, n)  -- sn x p x n
+
+   local delta = distributions.mvn.rnd(torch.zeros(1, p), Lmp * Lmp:t() + torch.diag(PsiI:pow(-1)))
+   local assign = torch.sign(delta:view(1, p) * torch.cmul(pPti, MuDiff):sum(1):view(p, n))
+
+   -- update Qs
+   local Qss = torch.zeros(n)
+   Qss[assign:eq(1)] = Qsp[assign:eq(1)] * self.hardness
+   Qsp[assign:eq(1)] = Qsp[assign:eq(1)] * (1 - self.hardness)
+   Qss[assign:eq(-1)] = Qsp[assign:eq(-1)] * (1 - self.hardness)
+   Qsp[assign:eq(-1)] = Qsp[assign:eq(-1)] * self.hardness
+   self.hidden.Qs = self.hidden.Qs:cat(Qss)
+
+   -- phim
+   self.hidden.phim = phim:cat(torch.ones(1) / s)
+
+   -- Lm and Lcov
+   self.factorLoading.Lm = Lm:cat(Lmp:view(1, p, k), 1)
+   self.factorLoading.Lcov = Lcov:cat(Lcovp:view(1, p, k, k), 1)
+
+   -- Gm and Gcov
+   self.factorLoading.Gm = Gm:cat(Gmp:view(1, p, d), 1)
+   self.factorLoading.Gcov = Gcov:cat(Gcovp:view(1, p, d, d), 1)
+
+   -- Xm and Xcov
+   self.conditional.Xm = Xm:cat(Xmp:view(1, d, n), 1)
+   self.conditional.Xcov = Xcov:cat(Xcovp:view(1, d, d), 1)
+
+   -- Zm and Zcov
+   self.hidden.Zm = Zm:cat(Zmp:view(1, k, n), 1)
+   self.hidden.Zcov = Zcov:cat(Zcovp:view(1, k, k), 1)
+
+   -- b and beta
+   self.factorLoading.b = b:cat(torch.ones(1, k), 1)
+   self.factorLoading.beta = beta:cat(torch.ones(1, d), 1)
+
+   --Fmatrix
+   self.Fmatrix = self.Fmatrix:cat(torch.zeros(9, 1), 2)
+end
+
+
+-- function to order candidates for birth
+function VBCMFA:orderCandidates()
+   local Qs = self.hidden:getS()
+   local Fmatrix = self.Fmatrix
+
+   local free_energy = - torch.cdiv(Fmatrix[{{6, 9}, {}}]:sum(1), Qs:sum(1)) - Fmatrix[{{2, 5}, {}}]:sum(1)
+   local _, order = torch.sort(free_energy, 2, true)
+   return order
+end
+
+
+-- function to save all the parameters in given file
+function VBCMFA:saveWorkspace(file)
+   local workspace = {
+      hidden = self.hidden,
+      conditional = self.conditional,
+      factorLoading = self.factorLoading,
+      hyper = self.hyper,
+      s = self.s,
+      Fmatrix = self.Fmatrix,
+      Fhist = self.Fhist
+   }
+   torch.save(file, workspace)
+end
+
+
+-- function to load parameters from given file
+function VBCMFA:loadWorkspace(file)
+   local workspace = torch.load(file)
+   self.hidden = workspace.hidden
+   self.conditional = workspace.conditional
+   self.factorLoading = workspace.factorLoading
+   self.hyper = workspace.hyper
+   self.s = workspace.s
+   self.Fmatrix = workspace.Fmatrix
+   self.Fhist = workspace.Fhist
+end
+
+
+function VBCMFA:handleBirth(Mu, Pt, X_star)
+   local file = 'workspace.dat'
+   local Ftarget = self:calcF(self.debug, Mu, Pt, X_star)
+   local order = self:orderCandidates()
+   self:saveWorkspace(file)
+   self:doBirth(order[1][1], Mu, Pt)
+   local F = self:calcF(self.debug, Mu, Pt, X_star)
+   if Ftarget > F then
+      print("reverting")
+      self:loadWorkspace(file)
+   else
+      print(string.format("continuing with %s components", self.s))
+   end
+end
+
+
+-------------------------------------------------------------------------
+------------------------- Helper Functions ------------------------------
+-------------------------------------------------------------------------
+
 function kldirichlet(phimP, phimQ)
    phimP0 = torch.sum(phimP)
    phimQ0 = torch.sum(phimQ)
@@ -594,6 +726,7 @@ function kldirichlet(phimP, phimQ)
             + (phimP - phimQ):double():dot(cephes.digamma(phimP) - cephes.digamma(phimQ)))
 end
 
+
 function klgamma(pa, pb, qa, qb)
    return torch.sum(
               (pa - qa):double():cmul(cephes.digamma(pa))
@@ -601,5 +734,6 @@ function klgamma(pa, pb, qa, qb)
             + (torch.log(pb) - torch.log(qb)):cmul(qa):double()
             + (pb - qb):cmul(pa):cdiv(pb):double())
 end
+
 
 return VBCMFA

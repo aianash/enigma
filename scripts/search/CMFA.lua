@@ -74,20 +74,33 @@ function CFMA:train(Mu, Pti, X_star, epochs)
       local F, dF = self:calcF(self.debug, Y, Pt, X_star)
       self.Fhist = self.Fhist:cat(torch.Tensor({F}))
 
+      self:handleBirth(Y, Pt, X_star)
+
       collectgarbage()
    end
 
    self:plotFhist()
+   self:plotPrediction(X_star)
+   print(string.format("Number of components = %d", self.s))
 end
 
 
 function CFMA:plotFhist()
    gnuplot.figure()
+   gnuplot.grid(true)
    gnuplot.plot(self.Fhist)
    gnuplot.xlabel("Epochs")
    gnuplot.ylabel("Lower Bound F")
 end
 
+
+function CFMA:plotPrediction(X_star)
+   local mean = self.factorLoading.Lm[1] * self.hidden.Zm[1] + self.factorLoading.Gm[1] * self.conditional.Xm[1]
+   gnuplot.figure()
+   gnuplot.grid(true)
+
+   gnuplot.scatter3(mean[1], mean[2], X_star[1])
+end
 
 function CFMA:infer(tr, ...)
    local t = os.clock()
