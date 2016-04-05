@@ -1,4 +1,7 @@
 local VBCMFA = require 'scripts.feature.vbcmfa'
+require 'nn'
+require 'nngraph'
+
 
 --------------------------------------------------
 --[[ CMFA ]]--
@@ -30,16 +33,22 @@ function CMFA:train(Y, X_star, epochs)
    assert(self:_checkDimensions(Y, p, N))
    assert(self:_checkDimensions(X_star, f, N))
 
+   self:check(Y, "Y")
+   self:check(X_star, "X_star")
+
    -- create randomly permuted dataset for each epoch
 
    local Ybatch = torch.zeros(p, n)
    local X_starbatch = torch.zeros(f, n)
 
-   local Xm_N = X_star:repeatTensor(s, 1, 1) --torch.randn(f, n):repeatTensor(s, 1, 1)
+   -- local Xm_N = torch.randn(f, n):repeatTensor(s, 1, 1)
+   local Xm_N = X_star:repeatTensor(s, 1, 1) --
    local Zm_N = torch.randn(s, k, N)
    local Qs_N = torch.ones(N, s) / s
 
-   local bStart
+   self:check(Xm_N, "Xm_N")
+   self:check(Zm_N, "Zm_N")
+   self:check(Qs_N, "Qs_N")
 
    local pause = true
    local debug = false
@@ -58,6 +67,7 @@ function CMFA:train(Y, X_star, epochs)
 Epoch %d's Convergence iteration number = %d
 ---------------------------------]], epoch, itr))
 
+         local itrStart = os.clock()
          self._sizeofS = torch.zeros(s)
 
          -- for batchIdx = 1, (N / n) do
@@ -65,8 +75,6 @@ Epoch %d's Convergence iteration number = %d
             print(string.format([[
 Training batch %d
 -----------------]], batchIdx))
-
-            bStart = os.time()
 
             -- prepare batches
             Ybatch:index(Y, 2, batch)
@@ -94,14 +102,12 @@ Training batch %d
             end
 
             for citr = 1, 20 do
-               for citr = 1, 5 do
+               for citr = 1, 10 do
                   self:infer("QZ", pause, debug, Ybatch)
                   self:infer("QX", pause, debug, Ybatch, X_starbatch)
                end
 
-               self:infer("Qs", pause, debug, Ybatch)
-
-               for citr = 1, 5 do
+               for citr = 1, 10 do
                   self:infer("QL", pause, debug, Ybatch)
                   self:infer("QG", pause, debug, Ybatch)
                   self:infer("Qnu", pause, debug)
@@ -146,15 +152,18 @@ Training batch %d
             Zm_N:indexCopy(3, batch, self.hidden.Zm)
             Qs_N:indexCopy(1, batch, self.hidden.Qs)
          end --  batch end
+
+         print(string.format("Convergence iteration finished in = %f", os.clock() - itrStart))
       end -- convergence iteration end
 
       if not self:doremoval() then self:dobirth() end -- either perform removal
                                                       -- or birth
    end -- epoch end
 
-   return self.factorLoading.Gm, self.factorLoading.Gcov, self.factorLoading.Lm, self.factorLoading.Lcov, Zm_N, Xm_N, Qs_N
+   return self.F, self.factorLoading.Gm, self.factorLoading.Gcov, self.factorLoading.Lm, self.factorLoading.Lcov, Zm_N, Xm_N, Qs_N
 end
 
+--
 function CMFA:infer(tr, pause, ...)
    local c = os.clock()
    -- print(string.format("\n== Infer %s ==", tr))
@@ -173,5 +182,4 @@ function CMFA:pr(tr, ns, pause)
 
    if pause then io.read() end
 end
-
 return CMFA
