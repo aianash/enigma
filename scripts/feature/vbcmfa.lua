@@ -1,3 +1,4 @@
+local pl = (require 'pl.import_into')()
 require 'cephes'
 
 function kldirichlet(phimP, phimQ)
@@ -253,14 +254,17 @@ function VBCMFA:inferQL(debug, Y) -- p x n
 
       local QstEzzT = Zcov[t] * torch.sum(Qst) + Zmt * ZmtkQst:t() -- k x k
       local a_bt = torch.div(b[t], a):pow(-1) -- k
+      -- print(Zmt)
 
       for q = 1, p do
          local rhoLcovtq = torch.inverse(torch.diag(a_bt) + QstEzzT * PsiI[q]) * rho -- k x k
-
          Lcov[t][q]:add(rhoLcovtq, 1 - rho, Lcov[t][q])
          Lm[t][q]:addmv(1 - rho, Lm[t][q], rho, Lcov[t][q], PsiInYZmtkQstT[q]) -- k x k * k x 1 = k x 1
       end
    end
+
+   self:check(Lm, "Lm")
+   self:check(Lcov, "Lcov")
 end
 
 --
@@ -293,6 +297,9 @@ function VBCMFA:inferQZ(debug, Y)
       Zm[t]:mul(1 - rho)
       Zm[t]:add(rhoZmt)
    end
+
+   self:check(Zm, "Zm")
+   self:check(Zcov, "Zcov")
 end
 
 --
@@ -309,6 +316,8 @@ function VBCMFA:inferQnu()
       local EL_sqr = torch.diag(torch.sum(Lcovt, 1)[1]) + torch.sum(torch.pow(Lmt, 2), 1)[1] -- k
       b[t] = b[t] * (1 - rho) + (torch.ones(k) * b_star + EL_sqr * 0.5) * rho
    end
+
+   self:check(b, "b")
 end
 
 ------------
@@ -355,6 +364,9 @@ function VBCMFA:inferQG(debug, Y)
          Gm[t][q]:addmv(1 - rho, Gm[t][q], rho,  Gcov[t][q], PsiInYXmtfQstT[q]) -- f x f * f x 1 = f x 1
       end
    end
+
+   self:check(Gm, "Gm")
+   self:check(Gcov, "Gcov")
 end
 
 --
@@ -395,6 +407,9 @@ function VBCMFA:inferQX(debug, Y, X_star) -- f x n
                            ):view(n, f):t()
       --               n x [ f x f * f x 1 ] = n x f x 1
    end
+
+   self:check(Xm, "Xm")
+   self:check(Xcov, "Xcov")
 end
 
 --
@@ -411,6 +426,8 @@ function VBCMFA:inferQomega()
       local EL_sqr = torch.diag(torch.sum(Gcovt, 1)[1]) + torch.sum(torch.pow(Gmt, 2), 1)[1] -- f
       beta[t] = beta[t] * (1 - rho) + (torch.ones(f) * beta_star + EL_sqr * 0.5) * rho
    end
+
+   self:check(beta, "beta")
 end
 
 -----------
@@ -473,6 +490,8 @@ function VBCMFA:inferQs(debug, Y, calc)
    -- then calculate the expected size (number of datapoints)
    -- of each component
    if calc then self._sizeofS:add(Qs:sum(1)) end
+
+   self:check(Qs, "Qs")
 end
 
 --
@@ -485,6 +504,10 @@ function VBCMFA:inferQpi()
    local rhophim = torch.add(phi_starm, torch.sum(Qs, 1)[1]) * rho
    phim:mul(1 - rho)
    phim:add(rhophim)
+   self:check(phim, "phim")
+   -- print(torch.sum(Qs, 1)[1])
+   -- print(phi_starm)
+   -- print(rhophim)
 end
 
 --------------------------
@@ -534,6 +557,8 @@ function VBCMFA:inferPsiI(debug, Y)
 
    PsiI:mul(1 - rho)
    PsiI:add(torch.div(torch.diag(psi), n):pow(-1) * rho)
+
+   self:check(PsiI, "PsiI")
 end
 
 --
@@ -723,6 +748,37 @@ end
 --
 function VBCMFA:dobirth()
    -- body
+end
+
+--
+function VBCMFA:check(X, name)
+   local nDim = X:nDimension()
+   local sizes = torch.Tensor(torch.Storage(nDim):copy(X:size()))
+   local X1 = X:view(sizes:prod(), 1)
+
+   local v, indices = torch.max(X1:ne(X1), 1)
+   v = v:squeeze()
+
+   if v == 1 then
+      for i = 1, indices:size(1) do
+         local lidx = indices[i]:squeeze()
+         local idx = {}
+         for d = 1, nDim - 1 do
+            local sz = sizes:narrow(1, d + 1, nDim - d):prod()
+            idx[d] = math.floor(lidx / sz + 1)
+            lidx = lidx - (idx[d] - 1) * sz
+         end
+         idx[nDim] = math.floor(lidx)
+         local str = name
+         local x = X
+         for _, i in ipairs(idx) do
+            str = str.."["..tostring(i).."]"
+            x = x[i]
+         end
+         print(string.format(str.." = %f", x))
+      end
+      os.exit()
+   end
 end
 
 return VBCMFA

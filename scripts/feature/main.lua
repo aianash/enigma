@@ -5,9 +5,14 @@ require 'nnx'
 require 'enigma'
 require 'distributions'
 require 'gnuplot'
+require 'socket'
 
 pl.stringx.import()
 torch.setdefaulttensortype('torch.FloatTensor')
+
+function sleep(sec)
+   socket.select(nil, nil, sec)
+end
 
 -- Steps
 -- A. [Optional] Take a raw dataset, explode the dataset with scaled and translated versions of images
@@ -110,6 +115,12 @@ do
    explodeDataset = function()
       os.execute('unzip '..srcdataset..';')
 
+      print(string.format([[
+-----------------
+Exploding Dataset
+-----------------
+zip = %s]], srcdataset))
+
       local targetTrainRootdir = pl.path.join(targetRootdir, 'Train')
       local targetTestRootdir = pl.path.join(targetRootdir, 'Test')
 
@@ -117,8 +128,8 @@ do
       pl.path.mkdir(targetTrainRootdir)
       pl.path.mkdir(targetTestRootdir)
 
-      explode(targetTrainRootdir, pl.path.join(pl.path.currentdir(), srcRootdir, 'Test'))
-      explode(targetTestRootdir, pl.path.join(pl.path.currentdir(), srcRootdir, 'Train'))
+      explode(targetTrainRootdir, pl.path.join(pl.path.currentdir(), srcRootdir, 'Train'))
+      explode(targetTestRootdir, pl.path.join(pl.path.currentdir(), srcRootdir, 'Test'))
 
       return targetRootdir, srccsvFileprefix
    end
@@ -183,7 +194,6 @@ do
             crop:copy(padding:narrow(2, x + 1, gh):narrow(3, y + 1, gw))
 
             dst:copy(resampler:updateOutput(crop))
-            -- image.display(dst) -- after uncommenting use qlua to run the whole program for this lines output
             trX = torch.uniform(-radius, radius)
             trY = torch.uniform(-radius, radius)
          end
@@ -201,17 +211,17 @@ do
       glimpse = glimpser{
          x = 0,
          y = 0,
-         gw = 10,
-         gh = 10,
-         ow = 48,
-         oh = 48,
-         radius = 0.05,
+         gw = 16,
+         gh = 16,
+         ow = 10,
+         oh = 10,
+         radius = 0.02,
          nbr = 10,
          rseed = 100
       }
    }
 
-   local targetRootdir = './item-image-glimpse-dataset'
+   -- local targetRootdir = './item-image-glimpse-dataset'
    local createValidation = true
 
    --[[ End Config ]]--
@@ -361,8 +371,9 @@ do
          local validationDataset = torch.load(pl.path.join(featuredir, featurename.."-glimpses-validation.bin")) -- [TO DO] test if present first
 
          local CMFA = require 'scripts.feature.cmfa'
+         local HeuristicCMFA = require 'scripts.feature.heuristiccmfa'
 
-         local run = "exp1"
+         local run = "exp3"
 
          -- Dummy Experiment 1
          if run == "exp1" then
@@ -398,8 +409,8 @@ do
             local k = 1
             local f = 1
 
-            local Y = torch.Tensor(p, N)
-            local X_star = torch.Tensor(f, N)
+            local Y = torch.zeros(p, N)
+            local X_star = torch.zeros(f, N)
 
             local Psi = torch.diag(torch.randn(p))
 
@@ -500,8 +511,8 @@ do
          if run == "exp2" then
             local outputVectorSize = 50
             local datasetSize = 400
-            local inputVectorSize = 10
-            local factorVectorSize = 8
+            local inputVectorSize = 8
+            local factorVectorSize = 4
             local numComponents = 2
 
             local model = CMFA:new{
@@ -559,6 +570,138 @@ do
             print(torch.dist(Lm[1], L1))
          end
 
+         if run == "exp3" then
+            local I = trainDataset.data
+            local M, g, c, h, w = I:size(1), I:size(2), I:size(3), I:size(4), I:size(5)
+            local N = M * g
+            local h_star, w_star = 3, 3
+
+            -- normalize dataset
+            function normalize(data)
+               local normKernel = image.gaussian1D(7)
+               local norm = nn.SpatialContrastiveNormalization(3, normKernel)
+               local batchSize = 200
+               local N = data:size(1)
+               for i = 1, N, batchSize do
+                  local batch = math.min(N, i + batchSize) - i
+                  local nImgs = norm:forward(data:narrow(1, i, batch))
+                  data:narrow(1, i, batch):copy(nImgs)
+               end
+            end
+
+            normalize(I:view(M * g, c, h, w))
+
+            Y = torch.zeros(h * w, N)
+            X_star = torch.zeros(h_star * w_star, N)
+
+            print(string.format("M = %d g = %d", M, g))
+
+            for i = 1, M do
+               for j = 1, g do
+                  local n = (i - 1) * g + j
+                  local src = I[{i, j, {}, {}, {}}]
+                  local grey = image.rgb2y(src)
+
+                  image.save("./glimpses/"..tostring(n).."-1.ppm", src)
+                  image.save("./glimpses/"..tostring(n).."-2.pgm", grey)
+
+                  Y[{ {}, n }]:copy(grey)
+                  X_star[{ {}, n }]:copy(image.scale(grey, w_star, h_star))
+               end
+            end
+
+            print(string.format("N = %d", N))
+            local s = 2
+            local k = 2
+            local p = h * w
+            local f = h_star * w_star
+
+            local cmfa = CMFA:new{
+               batchSize = N,
+               numComponents = s,
+               outputVectorSize = p,
+               factorVectorSize = k,
+               inputVectorSize = f, -- 16 x 16 inout image
+               datasetSize = N,
+               delay = 1,
+               forgettingRate = 0.6
+            }
+
+            local heuristic = HeuristicCMFA:new(cmfa)
+
+            cmfa:check(Y, "Yn")
+            local Gm, Gcov, Lm, Lcov, Zm, Xm, Qs = cmfa:train(Y, X_star, 13)
+
+            heuristic:train(Xm, Zm, X_star)
+            local hGx, hLz = heuristic:forward(X_star)
+            local heuristicY = hGx --+ hLz -- s x p x n
+
+            if pl.path.isdir("./output") then pl.dir.rmtree("./output") end
+            pl.path.mkdir("./output")
+            pl.path.mkdir("./output/allsep")
+
+            for t = 1, s do
+               pl.path.mkdir("./output/"..tostring(t))
+            end
+
+            local Ypred = torch.zeros(p, N)
+
+            for t = 1, s do
+               local Qst = Qs[{ {}, t }]
+               local Lz = Lm[t] * Zm[t]
+               local Gx = Gm[t] * Xm[t]
+               local Yt = Lz + Gx -- p x n
+               local pQst = Qst:contiguous():view(1, N):expand(p, N) -- -- p x n
+               local YpQst = torch.cmul(pQst, Yt) -- p x n
+               Ypred = Ypred + YpQst
+
+               for i = 1, N do
+                  local y = Yt[{ {}, i }]:contiguous():view(h, w)
+                  local x = Xm[{t, {}, i}]:contiguous():view(h_star, w_star)
+                  local lz = Lz[{ {}, i }]:contiguous():view(h, w)
+                  local gx = Gx[{ {}, i }]:contiguous():view(h, w)
+                  local hy = heuristicY[{t, {}, i }]:contiguous():view(h, w)
+
+                  image.save("./output/allsep/"..tostring(i).."-"..tostring(t).."-xm.pgm", image.scale(x, w_star * 8, h_star * 8))
+                  image.save("./output/allsep/"..tostring(i).."-"..tostring(t).."-y.pgm", image.scale(y, w * 8, h * 8))
+                  image.save("./output/allsep/"..tostring(i).."-"..tostring(t).."-Lz.pgm", image.scale(lz, w * 8, h * 8))
+                  image.save("./output/allsep/"..tostring(i).."-"..tostring(t).."-Gx.pgm", image.scale(gx, w * 8, h * 8))
+                  image.save("./output/allsep/"..tostring(i).."-"..tostring(t).."-yh.pgm", image.scale(hy, w * 8, h * 8))
+               end
+            end
+
+            for i = 1, N do
+               local y = Y[{ {}, i }]:contiguous():view(h, w)
+               image.save("./output/allsep/"..tostring(i).."-"..tostring(s + 1).."-target.pgm", image.scale(y, w * 8, h * 8))
+
+               y = Ypred[{ {}, i }]:contiguous():view(h, w)
+               image.save("./output/allsep/"..tostring(i).."-"..tostring(s + 2).."-weight.pgm", image.scale(y, w * 8, h * 8))
+
+               local x = X_star[{ {}, i }]:contiguous():view(h_star, w_star)
+               image.save("./output/allsep/"..tostring(i).."-"..tostring(s + 3).."-x_star.pgm", image.scale(x, w_star * 8, h_star * 8))
+            end
+
+            pl.path.mkdir("./output/G")
+            pl.path.mkdir("./output/L")
+            for t = 1, s do
+               local gt = "./output/G/"..tostring(t)
+               local lt = "./output/L/"..tostring(t)
+               pl.path.mkdir(gt)
+               pl.path.mkdir(lt)
+
+               for j = 1, f do
+                  local g = Gm[{t, {}, j}]:contiguous():view(h, w)
+                  image.save(gt.."/"..tostring(j)..".pgm", image.scale(g, w * 8, h * 8))
+               end
+
+               local ker = image.gaussian({size=9,sigma=1.591/9,normalize=true}):type('torch.DoubleTensor')
+
+               for j = 1, k do
+                  local l = Lm[{t, {}, j}]:contiguous():view(h, w):double()
+                  image.save(lt.."/"..tostring(j)..".pgm", image.scale(l, w * 8, h * 8))
+               end
+            end
+         end
 
          -- local gC, gH, gW = trainDataset:size(3), trainDataset:size(4), trainDataset:size(5)
 
