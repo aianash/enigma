@@ -73,7 +73,7 @@ function VBCMFA:__init(cfg)
    }
 
    self.hyper = {
-      mu_star = torch.ones(d, n) / d,
+      mu_star = torch.randn(d, n),
       sigma_star = torch.eye(d, d),
 
       a_star = 1,
@@ -93,7 +93,7 @@ function VBCMFA:__init(cfg)
 
    self.Fmatrix = torch.zeros(9, s)
    self.F = - 1 / 0
-   self.hardness = 1 -- cfg.hardness
+   self.hardness = cfg.hardness
 end
 
 
@@ -138,7 +138,6 @@ function VBCMFA:inferQs(Pti, Mu)
       local Lcovs = Lcov[s]  -- p x k x k
       local Gcovs = Gcov[s]  -- p x d x d
       local PsiI_M = torch.diag(PsiI) -- p x p
-      local logQss = logQs[{{}, s}]  -- n x 1
 
       local ELTPsiIG = Lms:t() * PsiI_M * Gms  -- k x d
       local EzTLTPsiIGx = torch.sum(torch.cmul(Zms, ELTPsiIG * Xms), 1)  -- 1 x n
@@ -159,7 +158,7 @@ function VBCMFA:inferQs(Pti, Mu)
       local MuDiff = Mu - (ELz * 2 + EGx * 2):view(1, p, n):expand(sn, p, n)  -- sn x p x n
       local PtiMuTPsiI = torch.bmm(PsiI_M:view(1, p, p):expand(sn, p, p), torch.cmul(pPti, Mu))  -- sn x p x n
 
-      logQss = - torch.cmul(PtiMuTPsiI, MuDiff):sum(1):sum(2):view(1, n) * 0.5
+      logQs[{{}, s}] = - torch.cmul(PtiMuTPsiI, MuDiff):sum(1):sum(2):view(1, n) * 0.5
                - EzTLTPsiIGx - EzTLTPsiILz * 0.5 - ExTGTPsiIGx * 0.5
                + torch.sum(torch.log(torch.diag(torch.potrf(Zcovs, 'U'))))
                + torch.sum(torch.log(torch.diag(torch.potrf(Xcovs, 'U'))))
@@ -233,7 +232,7 @@ end
 -- Pti : n x sn
 -- Mu  : sn x p x n
 ---------------------------------------------
-function VBCMFA:inferQx(Pti, Mu, X_star)
+function VBCMFA:inferQx(Pt, Mu, X_star)
    local n, S, p, k, d = self:_setandgetDims()
    local Gm, Gcov = self.factorLoading:getG()
    local Xm, Xcov = self.conditional:getX()
@@ -242,13 +241,13 @@ function VBCMFA:inferQx(Pti, Mu, X_star)
    local PsiI = self.hyper.PsiI
    local sigma_star = self.hyper.sigma_star
 
-   local Sn = Pti:size(2)
-   local PtiMu = torch.Tensor(p, n):fill(0)
+   local Sn = Pt:size(2)
+   local PtMu = torch.Tensor(p, n):fill(0)
 
    for sn = 1, Sn do
-      local resp = Pti[{{}, sn}] -- n x 1
+      local resp = Pt[{{}, sn}] -- n x 1
       local mean = Mu[sn] -- p x n
-      PtiMu = PtiMu + mean * torch.diag(resp) -- p x n
+      PtMu = PtMu + mean * torch.diag(resp) -- p x n
    end
 
    for s = 1, S do
@@ -259,14 +258,14 @@ function VBCMFA:inferQx(Pti, Mu, X_star)
       local Xms = Xm[s]  -- d x n
 
       local EGTLG = torch.reshape(Gcovs:reshape(p, d * d):t() * PsiI, d, d) + GmPsiI * Gms  -- d x d
-      local GmPsiIPtiMu = Gms:t() * torch.diag(PsiI) * (PtiMu - Lm[s] * Zm[s])  -- d x n
+      local GmPsiIPtMu = Gms:t() * torch.diag(PsiI) * (PtMu - Lm[s] * Zm[s])  -- d x n
 
       -- covariance
       local sigma_starI = torch.inverse(sigma_star)  -- d x d
-      Xcovs = torch.inverse(sigma_starI + EGTLG)  -- d x d
+      Xcov[s] = torch.inverse(sigma_starI + EGTLG)  -- d x d
 
       for j = 1, n do
-         Xms[{{}, j}] = Xcovs * (sigma_starI * X_star[{{}, j}] + GmPsiIPtiMu[{{}, j}])  -- d x 1
+         Xms[{{}, j}] = Xcovs * (sigma_starI * X_star[{{}, j}] + GmPsiIPtMu[{{}, j}])  -- d x 1
       end
    end
 end
@@ -619,8 +618,12 @@ function VBCMFA:doBirth(parent, Mu, Pt)
    local EGxs = Gmp * Xmp  -- p x n
    local MuDiff = Mu - EGxs:view(1, p, n):expand(sn, p, n)  -- sn x p x n
 
-   local delta = distributions.mvn.rnd(torch.zeros(1, p), Lmp * Lmp:t() + torch.diag(PsiI:pow(-1)))
-   local assign = torch.sign(delta:view(1, p) * torch.cmul(pPti, MuDiff):sum(1):view(p, n))
+   local cov = Lmp * Lmp:t() + Gmp * self.hyper.sigma_star * Gmp:t() + torch.diag(PsiI:pow(-1))
+   local delta0 = distributions.mvn.rnd(torch.zeros(1, p), cov)
+   local delta = Gmp * self.hyper.mu_star + delta0:view(p, 1):expand(p, n)
+
+   local PtiMuDiff = torch.cmul(pPti, MuDiff):sum(1):view(p, n)
+   local assign = torch.sign(torch.cmul(delta, PtiMuDiff):sum(1))
 
    -- update Qs
    local Qss = torch.zeros(n)
@@ -631,7 +634,8 @@ function VBCMFA:doBirth(parent, Mu, Pt)
    self.hidden.Qs = self.hidden.Qs:cat(Qss)
 
    -- phim
-   self.hidden.phim = phim:cat(torch.ones(1) / s)
+   self.hidden.phim = phim:cat(torch.Tensor(phim[parent]))
+   self.hidden.phim[parent] = phim[parent] / 2
 
    -- Lm and Lcov
    self.factorLoading.Lm = Lm:cat(Lmp:view(1, p, k), 1)
@@ -642,7 +646,10 @@ function VBCMFA:doBirth(parent, Mu, Pt)
    self.factorLoading.Gcov = Gcov:cat(Gcovp:view(1, p, d, d), 1)
 
    -- Xm and Xcov
-   self.conditional.Xm = Xm:cat(Xmp:view(1, d, n), 1)
+   local Ginv = Gmp:t() * torch.inverse(Gmp * Gmp:t())
+   local XmDiff = Ginv * delta
+   Xm[parent] = Xmp - XmDiff
+   self.conditional.Xm = Xm:cat((Xmp + XmDiff):view(1, d, n), 1)
    self.conditional.Xcov = Xcov:cat(Xcovp:view(1, d, d), 1)
 
    -- Zm and Zcov
@@ -703,13 +710,33 @@ function VBCMFA:handleBirth(Mu, Pt, X_star)
    local order = self:orderCandidates()
    self:saveWorkspace(file)
    self:doBirth(order[1][1], Mu, Pt)
-   local F = self:calcF(self.debug, Mu, Pt, X_star)
-   if Ftarget > F then
-      print("reverting")
-      self:loadWorkspace(file)
-   else
-      print(string.format("continuing with %s components", self.s))
+
+   for i = 1, 20 do
+      self:inferQz(Pt, Mu)
+      self:inferQL(Pt, Mu)
+      self:inferQx(Pt, Mu, X_star)
+      self:inferQG(Pt, Mu)
+      self:inferQnu()
+      self:inferQomega()
+      self:inferQpi()
+      self:inferPsiI(Pt, Y)
+      self:inferQs(Pt, Y)
    end
+
+   local F = self:calcF(self.debug, Mu, Pt, X_star)
+   print(string.format("--------------------------------\n"))
+   print(string.format("F = %f", F))
+   print(string.format("Ftagr = %f", Ftarget))
+   print("Qns = ")
+   print(self.hidden.Qs:sum(1))
+   print(string.format("--------------------------------\n"))
+
+   -- if F > Ftarget then
+   --    print("birth successful")
+   -- else
+   --    print("reverting")
+   --    self:loadWorkspace(file)
+   -- end
 end
 
 

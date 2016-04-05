@@ -33,32 +33,38 @@ end
 -- Pti responsibilities
 function CFMA:train(Mu, Pti, X_star, epochs)
    local n, s, p, k, d, N = self:_setandgetDims()
+   self.old = {}
 
    for epoch = 1, epochs do
-      for subEpoch = 1, 10 do
+      self.old.Xcov = self.conditional.Xcov:clone()
+      self.old.Xm = self.conditional.Xm:clone()
+      self.old.Zcov = self.hidden.Zcov:clone()
+      self.old.Zm = self.hidden.Zm:clone()
+      self.old.Lcov = self.factorLoading.Lcov:clone()
+      self.old.Lm = self.factorLoading.Lm:clone()
+      self.old.Gcov = self.factorLoading.Gcov:clone()
+      self.old.Gm = self.factorLoading.Gm:clone()
+      self.old.PsiI = self.hyper.PsiI:clone()
+      self.old.Qs = self.hidden.Qs:clone()
+
+      for subEpoch = 1, 5 do
          self:infer("Qz", Pt, Y)
          self:infer("HyperX", pause)
          self:infer("Qx", Pt, Y, X_star)
       end
 
-      for subEpoch = 1, 10 do
+      for subEpoch = 1, 5 do
          self:infer("QL", Pt, Y)
          self:infer("QG", Pt, Y)
       end
 
-      for subEpoch = 1, 10 do
-         self:infer("Qnu")
-         self:infer("Qomega")
-      end
+      self:infer("Qnu")
+      self:infer("Qomega")
 
-      for subEpoch = 1, 10 do
-         self:infer("Qpi")
-         self:infer("Qs", Pt, Y)
-      end
+      self:infer("Qpi")
+      self:infer("Qs", Pt, Y)
 
-      for subEpoch = 1, 10 do
-         self:infer("PsiI", Pt, Y)
-      end
+      self:infer("PsiI", Pt, Y)
 
       if self.debug == 1 then
          self:print("Zm", "hidden")
@@ -74,9 +80,9 @@ function CFMA:train(Mu, Pti, X_star, epochs)
       local F, dF = self:calcF(self.debug, Y, Pt, X_star)
       self.Fhist = self.Fhist:cat(torch.Tensor({F}))
 
-      self:handleBirth(Y, Pt, X_star)
-
+      -- self:handleBirth(Y, Pt, X_star)
       collectgarbage()
+      print(self.hidden.Qs:sum(1))
    end
 
    self:plotFhist()
@@ -95,26 +101,33 @@ end
 
 
 function CFMA:plotPrediction(X_star)
-   local mean = self.factorLoading.Lm[1] * self.hidden.Zm[1] + self.factorLoading.Gm[1] * self.conditional.Xm[1]
-   gnuplot.figure()
-   gnuplot.grid(true)
-
-   gnuplot.scatter3(mean[1], mean[2], X_star[1])
+   for i = 1, self.s do
+      local mean = self.factorLoading.Lm[i] * self.hidden.Zm[i] + self.factorLoading.Gm[i] * self.conditional.Xm[i]
+      gnuplot.figure()
+      gnuplot.scatter3(mean[1], mean[2], X_star[1])
+      gnuplot.xlabel('Mux')
+      gnuplot.ylabel('Muy')
+      gnuplot.zlabel('X_star')
+   end
 end
 
 function CFMA:infer(tr, ...)
-   local t = os.clock()
+   -- local t = os.clock()
    -- print(string.format("\n===== Infer%s =====\n", tr))
    self["infer"..tr](self, ...)
    -- print(string.format("\tt for %s = %f", tr, os.clock() - t))
    -- print("--------------------------------------------------")
-   if self.pause == 1 then io.read() end
+   -- if self.pause == 1 then io.read() end
 end
 
 
 function CFMA:print(tr, ns)
+   print("--------------------------------------------------")
+   print(string.format("%s old = \n", tr))
+   print(self.old[tr])
    print(string.format("%s after inference = \n", tr))
    print(self[ns][tr])
+   print("--------------------------------------------------")
    if self.pause == 1 then io.read() end
 end
 
