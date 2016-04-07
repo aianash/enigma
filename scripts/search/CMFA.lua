@@ -3,6 +3,7 @@
 ----------------------------------------------------------
 require 'gnuplot'
 
+local distributions = require 'distributions'
 local VBCMFA = require 'VBCMFA'
 
 local CFMA = {}
@@ -31,40 +32,49 @@ end
 
 -- Mu  means of factor analyzers of intent
 -- Pti responsibilities
-function CFMA:train(Mu, Pti, X_star, epochs)
+function CFMA:train(Mu, Pt, X_star, epochs)
    local n, s, p, k, d, N = self:_setandgetDims()
    self.old = {}
 
+   self.conditional.Xm:copy(X_star:repeatTensor(s, 1, 1))
+
    for epoch = 1, epochs do
-      self.old.Xcov = self.conditional.Xcov:clone()
-      self.old.Xm = self.conditional.Xm:clone()
-      self.old.Zcov = self.hidden.Zcov:clone()
-      self.old.Zm = self.hidden.Zm:clone()
-      self.old.Lcov = self.factorLoading.Lcov:clone()
-      self.old.Lm = self.factorLoading.Lm:clone()
-      self.old.Gcov = self.factorLoading.Gcov:clone()
-      self.old.Gm = self.factorLoading.Gm:clone()
-      self.old.PsiI = self.hyper.PsiI:clone()
-      self.old.Qs = self.hidden.Qs:clone()
-
-      for subEpoch = 1, 5 do
-         self:infer("Qz", Pt, Y)
-         self:infer("HyperX", pause)
-         self:infer("Qx", Pt, Y, X_star)
+      if self.debug == 1 then
+         self.old.Xcov = self.conditional.Xcov:clone()
+         self.old.Xm = self.conditional.Xm:clone()
+         self.old.Zcov = self.hidden.Zcov:clone()
+         self.old.Zm = self.hidden.Zm:clone()
+         self.old.Lcov = self.factorLoading.Lcov:clone()
+         self.old.Lm = self.factorLoading.Lm:clone()
+         self.old.Gcov = self.factorLoading.Gcov:clone()
+         self.old.Gm = self.factorLoading.Gm:clone()
+         self.old.PsiI = self.hyper.PsiI:clone()
+         self.old.Qs = self.hidden.Qs:clone()
       end
 
-      for subEpoch = 1, 5 do
-         self:infer("QL", Pt, Y)
-         self:infer("QG", Pt, Y)
+      for convEpoch = 1, 20 do
+         for subEpoch = 1, 15 do
+            self:infer("Qz", Pt, Mu)
+            self:infer("Qx", Pt, Mu, X_star)
+         end
+
+         for subEpoch = 1, 15 do
+            self:infer("QL", Pt, Mu)
+            self:infer("QG", Pt, Mu)
+            self:infer("Qnu")
+            self:infer("Qomega")
+         end
+
+         self:infer("Qs", Pt, Mu)
+         self:infer("Qpi")
+
+         if convEpoch % 3 == 0 then
+            for subEpoch = 1, 15 do
+               self:infer("PsiI", Pt, Mu)
+               self:infer("HyperX", pause)
+            end
+         end
       end
-
-      self:infer("Qnu")
-      self:infer("Qomega")
-
-      self:infer("Qpi")
-      self:infer("Qs", Pt, Y)
-
-      self:infer("PsiI", Pt, Y)
 
       if self.debug == 1 then
          self:print("Zm", "hidden")
@@ -77,16 +87,18 @@ function CFMA:train(Mu, Pti, X_star, epochs)
          self:print("Gcov", "factorLoading")
       end
 
-      local F, dF = self:calcF(self.debug, Y, Pt, X_star)
+      local F, dF = self:calcF(self.debug, Mu, Pt, X_star)
+      print(F)
       self.Fhist = self.Fhist:cat(torch.Tensor({F}))
 
-      -- self:handleBirth(Y, Pt, X_star)
       collectgarbage()
-      print(self.hidden.Qs:sum(1))
+      print(string.format("Qs responsibility = %s", self.hidden.Qs:sum(1)))
    end
 
-   self:plotFhist()
-   self:plotPrediction(X_star)
+   self:handleBirth(Mu, Pt, X_star)
+
+   -- self:plotFhist()
+   -- self:plotPrediction(X_star)
    print(string.format("Number of components = %d", self.s))
 end
 
