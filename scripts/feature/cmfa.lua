@@ -23,6 +23,80 @@ end
 
 function CMFA:__init( ... )
    parent:__init( ... )
+   local n, s, p, k, f, N = self:_setandgetDims()
+
+   self.Xm_N = torch.zeros(s, f, N)
+   self.Zm_N = torch.randn(s, k, N)
+   self.Qs_N = torch.ones(N, s) / s
+end
+
+--
+function CMFA:batchtrain(Ybatch, X_starbatch, batchperm, batchIdx, epochs)
+   local n, s, p, k, f, N = self:_setandgetDims()
+   assert(self:_checkDimensions(Ybatch, p, n))
+   assert(self:_checkDimensions(X_starbatch, f, n))
+
+   print(X_starbatch:index(2, torch.linspace(1, n, 20):floor():long()))
+   self:check(Ybatch:contiguous(), "Ybatch")
+   self:check(X_starbatch:contiguous(), "X_star")
+
+   print(string.format([[
+CMFA Training batch %d
+-----------------]], batchIdx))
+
+   -- self.conditional.Xm:index(self.Xm_N, 3, batchperm)
+   self:reset()
+   self.conditional.Xm:copy(X_starbatch:repeatTensor(s, 1, 1))
+
+   -- self.hidden.Zm:index(self.Zm_N, 3, batchperm)
+   -- self.hidden.Qs:index(self.Qs_N, 1, batchperm)
+
+   self:rho(batchIdx)
+   print(string.format("rho = %f\n", self:rho()))
+   print(string.format("Prev Qs responsibility = %s", self.hidden.Qs:sum(1)))
+
+   for epoch = 1, epochs do
+      -- for citr = 1, 5 do
+      for citr = 1, 10 do
+         self:infer("QZ", pause, debug, Ybatch)
+         self:infer("QX", pause, debug, Ybatch, X_starbatch)
+      end
+
+      for citr = 1, 10 do
+         self:infer("QL", pause, debug, Ybatch)
+         self:infer("QG", pause, debug, Ybatch)
+         self:infer("Qnu", pause, debug)
+         self:infer("Qomega", pause, debug)
+      end
+      -- end
+
+      self:infer("Qs", pause, debug, Ybatch)
+      self:infer("Qpi", pause, debug)
+
+      -- print(self.hidden.Qs:sum(1))
+      -- print("\n")
+
+      if epoch % 2 == 0 then
+         for ctr = 1, 5 do
+            self:infer("PsiI", pause, debug, Ybatch)
+            self:infer("E_starI", pause, debug, X_starbatch)
+         end
+      end
+      xlua.progress(epoch, epochs)
+   end
+   xlua.progress(epochs, epochs)
+
+   self:infer("Qs", pause, debug, Ybatch, true)
+   print(string.format("sizeOfS %s", self._sizeofS))
+
+   local F, dF = self:calcF(debug, Ybatch, X_starbatch)
+   print(string.format("F = %f \t dF = %f", F, dF))
+
+   -- self.Xm_N:indexCopy(3, batchperm, self.conditional.Xm)
+   self.Zm_N:indexCopy(3, batchperm, self.hidden.Zm)
+   self.Qs_N:indexCopy(1, batchperm, self.hidden.Qs)
+
+   return F
 end
 
 -- Trains the CMFA model using Stochastic
@@ -63,9 +137,9 @@ function CMFA:train(Y, X_star, epochs)
       -- to allow convergence
       for itr = 1, 3  do
          print(string.format([[
----------------------------------
+--------------------------------------------
 Epoch %d's Convergence iteration number = %d
----------------------------------]], epoch, itr))
+--------------------------------------------]], epoch, itr))
 
          local itrStart = os.clock()
          self._sizeofS = torch.zeros(s)
@@ -84,7 +158,6 @@ Training batch %d
             self.hidden.Qs:index(Qs_N, 1, batch)
 
             self:rho(batchIdx)
-
             print(string.format("rho = %f\n", self:rho()))
 
             pause = false
@@ -102,17 +175,19 @@ Training batch %d
             end
 
             for citr = 1, 20 do
-               for citr = 1, 10 do
+               -- for citr = 1, 10 do
+               for citr = 1, 5 do
                   self:infer("QZ", pause, debug, Ybatch)
                   self:infer("QX", pause, debug, Ybatch, X_starbatch)
                end
 
-               for citr = 1, 10 do
+               for citr = 1, 5 do
                   self:infer("QL", pause, debug, Ybatch)
                   self:infer("QG", pause, debug, Ybatch)
                   self:infer("Qnu", pause, debug)
                   self:infer("Qomega", pause, debug)
                end
+               -- end
 
                self:infer("Qs", pause, debug, Ybatch)
                self:infer("Qpi", pause, debug)
