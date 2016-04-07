@@ -213,8 +213,8 @@ do
          y = 0,
          gw = 16,
          gh = 16,
-         ow = 10,
-         oh = 10,
+         ow = 16,
+         oh = 16,
          radius = 0.02,
          nbr = 10,
          rseed = 100
@@ -372,8 +372,9 @@ do
 
          local CMFA = require 'scripts.feature.cmfa'
          local HeuristicCMFA = require 'scripts.feature.heuristiccmfa'
+         local NNCMFATrainer = require 'scripts.feature.nncmfatrainer'
 
-         local run = "exp3"
+         local run = "exp4"
 
          -- Dummy Experiment 1
          if run == "exp1" then
@@ -615,9 +616,10 @@ do
             local k = 2
             local p = h * w
             local f = h_star * w_star
+            local n = N / 2
 
             local cmfa = CMFA:new{
-               batchSize = N,
+               batchSize = n,
                numComponents = s,
                outputVectorSize = p,
                factorVectorSize = k,
@@ -630,7 +632,7 @@ do
             local heuristic = HeuristicCMFA:new(cmfa)
 
             cmfa:check(Y, "Yn")
-            local Gm, Gcov, Lm, Lcov, Zm, Xm, Qs = cmfa:train(Y, X_star, 13)
+            local F, Gm, Gcov, Lm, Lcov, Zm, Xm, Qs = cmfa:train(Y, X_star, 3)
 
             heuristic:train(Xm, Zm, X_star)
             local hGx, hLz = heuristic:forward(X_star)
@@ -702,6 +704,125 @@ do
                end
             end
          end
+
+         if run == "exp4" then
+            local I = trainDataset.data
+            local M, g, c, h, w = I:size(1), I:size(2), I:size(3), I:size(4), I:size(5)
+            local N = M * g
+
+            -- normalize dataset
+            function normalize(data)
+               local normKernel = image.gaussian1D(7)
+               local norm = nn.SpatialContrastiveNormalization(3, normKernel)
+               local batchSize = 200
+               local N = data:size(1)
+               for i = 1, N, batchSize do
+                  local batch = math.min(N, i + batchSize) - i
+                  local nImgs = norm:forward(data:narrow(1, i, batch))
+                  data:narrow(1, i, batch):copy(nImgs)
+               end
+            end
+
+            normalize(I:view(M * g, c, h, w))
+
+            local L = torch.zeros(N, h * w) -- label
+            local D = torch.zeros(N, 1, h,  w) -- data
+
+            for i = 1, M do
+               for j = 1, g do
+                  local n = (i - 1) * g + j
+                  local src = I[{i, j, {}, {}, {}}]
+                  local grey = image.rgb2y(src)
+
+                  image.save("./glimpses/"..tostring(n).."-1.ppm", src)
+                  image.save("./glimpses/"..tostring(n).."-2.pgm", grey)
+
+                  L[{ n, {} }]:copy(grey)
+                  D[{ n, 1, {}, {} }]:copy(grey)
+               end
+            end
+
+            print(string.format("N = %d, h = %d, w = %d", N, h, w))
+            local s = 2
+            local k = 4
+            local p = h * w
+            local f = 20
+            local n = N
+
+            local cmfa = CMFA:new{
+               batchSize = n,
+               numComponents = s,
+               outputVectorSize = p,
+               factorVectorSize = k,
+               inputVectorSize = f, -- 16 x 16 inout image
+               datasetSize = N,
+               delay = 1,
+               forgettingRate = 0.6
+            }
+
+            local net = nn.Sequential()
+            net:add(nn.SpatialConvolution(1, 6, 5, 5, 1, 1, 2, 2))
+            net:add(nn.ReLU())
+            net:add(nn.SpatialMaxPooling(2, 2, 2, 2))
+
+            net:add(nn.SpatialConvolution(6, 10, 3, 3, 1, 1, 1, 1))
+            net:add(nn.ReLU())
+            net:add(nn.SpatialMaxPooling(2, 2, 2, 2))
+
+            net:add(nn.View(10 * 4 * 4))
+            net:add(nn.Linear(10 * 4 * 4, f*2))
+            net:add(nn.ReLU())
+            net:add(nn.Linear(f*2, f/2))
+            net:add(nn.Sigmoid())
+            net:add(nn.Linear(f/2, f))
+            net:add(nn.Sigmoid())
+
+            -- os.exit()
+            local optim_state = {
+               learningRate = 0.01,
+               momentum = 0,
+               learningRateDecay = 0,
+               weightDecay = 0
+            }
+
+            local trainer = NNCMFATrainer:new(net, cmfa, optim_state)
+            trainer:train(L, D, 3, 20)
+
+            if pl.path.isdir("./output") then pl.dir.rmtree("./output") end
+            pl.path.mkdir("./output")
+            pl.path.mkdir("./output/allsep")
+
+            for t = 1, s do
+               pl.path.mkdir("./output/"..tostring(t))
+            end
+
+            local Lm = cmfa.factorLoading:getL()
+            local Gm = cmfa.factorLoading:getG()
+            local Zm = cmfa.hidden:getZ()
+            local Xm = cmfa.conditional:getX()
+            local Qs = cmfa.hidden:getS()
+
+            local Ypred = torch.zeros(p, N)
+
+            for t = 1, s do
+               local Qst = Qs[{ {}, t }]
+               local Lz = Lm[t] * Zm[t]
+               local Gx = Gm[t] * Xm[t]
+               local Yt = Lz + Gx -- p x n
+               local pQst = Qst:contiguous():view(1, N):expand(p, N) -- -- p x n
+               local YpQst = torch.cmul(pQst, Yt) -- p x n
+               Ypred = Ypred + YpQst
+            end
+
+            for i = 1, N do
+               local y = L[{ i, {} }]:contiguous():view(h, w)
+               image.save("./output/allsep/"..tostring(i).."-"..tostring(s + 1).."-target.pgm", image.scale(y, w * 8, h * 8))
+
+               local y = Ypred[{ {}, i }]:contiguous():view(h, w)
+               image.save("./output/allsep/"..tostring(i).."-"..tostring(s + 1).."-weight.pgm", image.scale(y, w * 8, h * 8))
+            end
+         end
+
 
          -- local gC, gH, gW = trainDataset:size(3), trainDataset:size(4), trainDataset:size(5)
 
