@@ -88,7 +88,7 @@ end
 print(string.format("Size of Y = %s", Y:size()))
 print(string.format("Size of X_star = %s", X_star:size()))
 
-local s = 2
+local s = 1
 local k = 3
 local p = h * w
 local f = h_star * w_star
@@ -111,4 +111,4 @@ local cmfa = CMFA:new{
    hardness = 1
 }
 
-cmfa:train(Y, Pt, X_star:contiguous(), 20)
+cmfa:train(Y, Pt, X_star:contiguous(), 40)

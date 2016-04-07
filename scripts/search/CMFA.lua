@@ -88,18 +88,18 @@ function CFMA:train(Mu, Pt, X_star, epochs)
       end
 
       local F, dF = self:calcF(self.debug, Mu, Pt, X_star)
-      print(F)
       self.Fhist = self.Fhist:cat(torch.Tensor({F}))
 
+      -- if epoch % 5 == 0 then
+      --    self:handleBirth(Mu, Pt, X_star)
+      -- end
+
       collectgarbage()
-      print(string.format("Qs responsibility = %s", self.hidden.Qs:sum(1)))
    end
 
-   self:handleBirth(Mu, Pt, X_star)
 
-   -- self:plotFhist()
+   self:plotFhist()
    -- self:plotPrediction(X_star)
-   print(string.format("Number of components = %d", self.s))
 end
 
 

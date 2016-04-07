@@ -465,10 +465,6 @@ function VBCMFA:calcF(debug, Mu, Pt, X_star) -- p x n, f x n
    local Qs, phim = self.hidden:getS()
    local a_star, b_star, alpha_star, beta_star, mu_star, sigma_star, phi_star, PsiI = self.hyper:get()
 
-   print(string.format("Qs for first 20 samples =\n%s", self.hidden.Qs[{{1, 20}, {}}]))
-   print(string.format("Number of samples for each components = \n%s", self.hidden.Qs:sum(1)))
-
-
    local Fmatrix = self.Fmatrix -- 7 x s
    local PsiI_M = torch.diag(self.hyper.PsiI)
 
@@ -584,8 +580,6 @@ function VBCMFA:calcF(debug, Mu, Pt, X_star) -- p x n, f x n
       Fmatrixt[9] = torch.cmul(E, Qst):sum() - 0.5 * Ps[t] * logDet2piPsiI
    end
 
-   print(string.format("Fmatrix = \n%s", Fmatrix))
-
    self.F = torch.sum(Fmatrix) + Fmatrix1
    self.dF = self.F - F_old
 
@@ -653,10 +647,6 @@ function VBCMFA:doBirth(parent, Mu, Pt)
    self.factorLoading.Gcov = Gcov:cat(Gcovp:view(1, p, d, d), 1)
 
    -- Xm and Xcov
-   -- local Ginv = Gmp:t() * torch.inverse(Gmp * Gmp:t())
-   -- local XmDiff = Ginv * delta
-   -- Xm[parent] = Xmp - XmDiff
-   -- self.conditional.Xm = Xm:cat((Xmp + XmDiff):view(1, d, n), 1)
    self.conditional.Xm = Xm:cat(Xmp:view(1, d, n), 1)
    self.conditional.Xcov = Xcov:cat(Xcovp:view(1, d, d), 1)
 
@@ -718,28 +708,6 @@ function VBCMFA:handleBirth(Mu, Pt, X_star)
    local order = self:orderCandidates()
    self:saveWorkspace(file)
    self:doBirth(order[1][1], Mu, Pt)
-
-   for i = 1, 20 do
-      self:inferQz(Pt, Mu)
-      self:inferQL(Pt, Mu)
-      self:inferQx(Pt, Mu, X_star)
-      self:inferQG(Pt, Mu)
-   end
-
-   local F = self:calcF(self.debug, Mu, Pt, X_star)
-   print(string.format("--------------------------------\n"))
-   print(string.format("F = %f", F))
-   print(string.format("Ftagr = %f", Ftarget))
-   print("Qns = ")
-   print(self.hidden.Qs:sum(1))
-   print(string.format("--------------------------------\n"))
-
-   if F > Ftarget then
-      print("birth successful")
-   else
-      print("reverting")
-      self:loadWorkspace(file)
-   end
 end
 
 
