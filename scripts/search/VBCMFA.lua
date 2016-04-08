@@ -160,8 +160,10 @@ function VBCMFA:inferQs(Pt, Mu)
 
       logQs[{{}, s}] = - torch.cmul(PtMuTPsiI, MuDiff):sum(1):sum(2):view(1, n) * 0.5
                - EzTLTPsiIGx - EzTLTPsiILz * 0.5 - ExTGTPsiIGx * 0.5
-               + torch.sum(torch.log(torch.diag(torch.potrf(Zcovs, 'U'))))
-               + torch.sum(torch.log(torch.diag(torch.potrf(Xcovs, 'U'))))
+               + logdet(Zcovs) * 0.5
+               + logdet(Xcovs) * 0.5
+               -- + torch.sum(torch.log(torch.diag(torch.potrf(Zcovs, 'U'))))
+               -- + torch.sum(torch.log(torch.diag(torch.potrf(Xcovs, 'U'))))
    end
 
    logQs:add(cephes.digamma(phim):float():view(1, S):expand(n, S))
@@ -257,8 +259,8 @@ function VBCMFA:inferQx(Pt, Mu, X_star)
       local GmPsiIPtMu = Gms:t() * torch.diag(PsiI) * (PtMu - Lm[s] * Zm[s])  -- f x n
 
       -- covariance
-      local sigma_starI = torch.inverse(sigma_star)  -- f x f
-      Xcov[s] = torch.inverse(sigma_starI + EGTLG)  -- f x f
+      local sigma_starI = inverse(sigma_star)  -- f x f
+      Xcov[s] = inverse(sigma_starI + EGTLG)  -- f x f
       Xm[s] = Xcov[s] * (sigma_starI * X_star + GmPsiIPtMu)  -- f x n
    end
 
@@ -279,12 +281,12 @@ function VBCMFA:inferHyperX()
    local Qs = self.hidden:getS()
 
    local mu_starT = torch.bmm(Xm:permute(3, 2, 1), Qs:view(n, S, 1))  -- n x f x 1
-   mu_star = mu_starT:view(n, f):t():contiguous()  -- f x n
+   -- mu_star = mu_starT:view(n, f):t():contiguous()  -- f x n
 
    local XcovQs = Xcov:view(S, f * f):t() * Qs:sum(1):t() / n  -- f*f x 1
-   sigma_star = (torch.inverse(XcovQs:view(f, f))):contiguous()
+   self.hyper.sigma_star = (inverse(XcovQs:view(f, f))):contiguous()
 
-   self:check(mu_star, "mu_star")
+   -- self:check(mu_star, "mu_star")
    self:check(sigma_star, "sigma_star")
 end
 
@@ -322,7 +324,7 @@ function VBCMFA:inferQG(Pt, Mu)
 
 
       for q = 1, p do
-         torch.inverse(Gcovs[q], EOmega + QsXXT * PsiI[q])
+         Gcovs[q] = inverse(EOmega + QsXXT * PsiI[q])
          Gms[q] = Gcovs[q] * PsiIYQsXms[q]
       end
    end
@@ -364,7 +366,7 @@ function VBCMFA:inferQL(Pt, Mu)
       local PsiIYQsZms = torch.diag(PsiI) * (PtMu - Gm[s] * Xm[s]) * ZmQs:t()  -- p x k
 
       for q = 1, p do
-         torch.inverse(Lcovs[q], Enu + QsZZT * PsiI[q])
+         Lcovs[q] = inverse(Enu + QsZZT * PsiI[q])
          Lms[q] = Lcovs[q] * PsiIYQsZms[q]
       end
    end
@@ -398,7 +400,7 @@ function VBCMFA:inferQz(Pt, Mu)
 
       -- covariance
       local Eql = (Lcovs:view(p, k * k):t() * PsiI):view(k, k) + LmTPsiI * Lms
-      Zcov[s] = torch.inverse(torch.eye(k) + Eql)
+      Zcov[s] = inverse(torch.eye(k) + Eql)
 
       -- mean
       Zm[s] = Zcov[s] * Lms:t() * torch.diag(PsiI) * (PtMu - Gm[s] * Xm[s])
@@ -470,7 +472,8 @@ function VBCMFA:calcF(debug, Mu, Pt, X_star) -- p x n, f x n
 
    local Ps = torch.sum(Qs, 1)[1] -- s
 
-   local logDetE_star = 2 * torch.sum(torch.log(torch.diag(torch.potrf(sigma_star, 'U'))))  -- change the name to sigma_star
+   -- local logDetE_star = 2 * torch.sum(torch.log(torch.diag(torch.potrf(sigma_star, 'U'))))  -- change the name to sigma_star
+   local logDetE_star = logdet(inverse(sigma_star)) -- change the name to sigma_star
 
    local X_star_Xm = X_star:view(1, d, n):expand(s, d, n) - Xm -- s x d x n
    local Qsmod = Qs:clone()
@@ -512,7 +515,8 @@ function VBCMFA:calcF(debug, Mu, Pt, X_star) -- p x n, f x n
 
       for q = 1, p do
          f3 = f3 - k
-               + 2 * torch.sum(torch.log(torch.diag(torch.potrf(Lcovt[q]))))
+               + logdet(Lcovt[q])
+               -- + 2 * torch.sum(torch.log(torch.diag(torch.potrf(Lcovt[q]))))
                - (torch.diag(Lcovt[q]) + torch.pow(Lmt[q], 2)):dot(a_bt)
       end
       Fmatrixt[3] = f3 / 2
@@ -526,7 +530,8 @@ function VBCMFA:calcF(debug, Mu, Pt, X_star) -- p x n, f x n
 
       for q = 1, p do
          f5 = f5 - d
-               + 2 * torch.sum(torch.log(torch.diag(torch.potrf(Gcovt[q]))))
+               + logdet(Gcovt[q])
+               -- + 2 * torch.sum(torch.log(torch.diag(torch.potrf(Gcovt[q]))))
                - (torch.diag(Gcovt[q]) + torch.pow(Gmt[q], 2)):dot(alpha_betat)
       end
       Fmatrixt[5] = f5 / 2
@@ -539,7 +544,8 @@ function VBCMFA:calcF(debug, Mu, Pt, X_star) -- p x n, f x n
       local ZmtkQst = torch.cmul(Zmt, kQst) -- k x n
       local QstEzzT = Zcovt * Ps[t] + Zmt * ZmtkQst:t()
       Fmatrixt[7] = 0.5 * k * torch.sum(Qst)
-                    + 0.5 * Ps[t] * 2 * torch.sum(torch.log(torch.diag(torch.potrf(Zcovt, 'U'))))
+                    + 0.5 * Ps[t] * logdet(Zcovt)
+                    -- + 0.5 * Ps[t] * 2 * torch.sum(torch.log(torch.diag(torch.potrf(Zcovt, 'U'))))
                     - 0.5 * torch.trace(QstEzzT)
 
       -- Fmatrix[8]
@@ -549,8 +555,9 @@ function VBCMFA:calcF(debug, Mu, Pt, X_star) -- p x n, f x n
 
       Fmatrixt[8] = 0.5 * d * torch.sum(Qst)
                     - 0.5 * Ps[t] * logDetE_star
-                    + 0.5 * Ps[t] * 2 * torch.sum(torch.log(torch.diag(torch.potrf(Xcovt, 'U'))))
-                    - 0.5 * torch.trace(torch.inverse(sigma_star) * QstExxT)
+                    + 0.5 * Ps[t] * logdet(Xcovt)
+                    -- + 0.5 * Ps[t] * 2 * torch.sum(torch.log(torch.diag(torch.potrf(Xcovt, 'U'))))
+                    - 0.5 * torch.trace(inverse(sigma_star) * QstExxT)
 
       -- Fmatrix[9]
       local ELTPsiIG = Lmt:t() * PsiI_M * Gmt -- k x d
@@ -712,6 +719,11 @@ end
 
 
 function VBCMFA:check(X, name)
+   -- not supported for vectors
+   if X:squeeze():nDimension() == 1 then
+      return
+   end
+
    local nDim = X:nDimension()
    local sizes = torch.Tensor(torch.Storage(nDim):copy(X:size()))
    local X1 = X:view(sizes:prod(), 1)
@@ -764,5 +776,55 @@ function klgamma(pa, pb, qa, qb)
             + (pb - qb):cmul(pa):cdiv(pb):double())
 end
 
+
+-- Calculate the nearest positive definite matrix
+function posdefify(M, ev)
+   local e, V = torch.symeig(M, 'V')
+   local n = e:size(1)
+   local ev = ev or 1e-7
+   local eps = ev * math.abs(e[n])
+
+   if e[1] < eps then
+      e[e:lt(eps)] = eps
+      local old = torch.diag(M)
+      local Mnew = V * torch.diag(e) * V:t()
+      local D = old:cmax(eps):cdiv(torch.diag(Mnew)):sqrt()
+      M:copy(torch.diag(D) * Mnew * torch.diag(D))
+   end
+end
+
+function logdet(M)
+   local status, logdet = pcall(function()
+      return 2 * torch.sum(torch.log(torch.diag(torch.potrf(M, 'U'))))
+   end)
+
+   if not status then
+      posdefify(M)
+      logdet = 2 * torch.sum(torch.log(torch.diag(torch.potrf(M, 'U'))))
+   end
+   return logdet
+end
+
+--
+function inverse(M, definite, ev)
+   local definite = definite or true
+   local status, inv = pcall(function ()
+      return torch.inverse(M)
+   end)
+   local ev = ev or 1e-7
+
+   if not status then
+      local u, s, v = torch.svd(M)
+      local tol = ev * M:size(1) * s[1]
+      s[s:lt(tol)] = 0
+      s:pow(-1)
+      s[s:eq(math.huge)] = 0
+      inv = u * torch.diag(s) * v:t()
+      print(string.format("INV = %s", inv))
+   end
+
+   if definite then posdefify(inv) end
+   return inv
+end
 
 return VBCMFA
