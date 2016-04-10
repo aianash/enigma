@@ -68,8 +68,8 @@ local h_star, w_star = 3, 3
 
 normalize(I:view(M * g, c, h, w))
 
-Y = torch.zeros(h * w, N)
-X_star = torch.zeros(h_star * w_star, N)
+local Y = torch.zeros(h * w, N)
+local X_star = torch.zeros(h_star * w_star, N)
 
 for i = 1, M do
    for j = 1, g do
@@ -89,7 +89,7 @@ print(string.format("Size of Y = %s", Y:size()))
 print(string.format("Size of X_star = %s", X_star:size()))
 
 local s = 1
-local k = 3
+local k = 2
 local p = h * w
 local f = h_star * w_star
 local sn = 1
@@ -106,9 +106,32 @@ local cmfa = CMFA:new{
    datasetSize = N,
    delay = 1,
    forgettingRate = 0.6,
-   debug = 0,
-   pause = 0,
+   debug = 1,
+   pause = 1,
    hardness = 1
 }
 
-cmfa:train(Y, Pt, X_star:contiguous(), 40)
+local F, Gm, Gcov, Lm, Lcov, Zm, Xm, Qs = cmfa:train(Y, Pt, X_star:contiguous(), 50)
+
+
+print("Training done... ")
+
+local mean = torch.zeros(s, p, N)
+
+for i = 1, s do
+   mean[i] = Lm[i] * Zm[i] + Gm[i] * Xm[i]
+end
+
+local outputDir = "./result"
+
+for i = 1, N do
+   local y = Y[1][{{}, i}]
+   y = y:contiguous():view(1, h, w)
+   image.save(string.format("%s/%04d-y.jpg", outputDir, i), y)
+
+   for j = 1, s do
+      local pred = mean[j][{{}, i}]
+      pred = pred:contiguous():view(1, h, w)
+      image.save(string.format("%s/%04d-p%d.jpg", outputDir, i, j), pred)
+   end
+end
