@@ -1,48 +1,19 @@
 local pl = require('pl.import_into')()
 require 'nn'
 require 'optim'
-require 'scripts.feature.cmfacriterion'
-
-
--- from fblualib/fb/util/data.lua , copied here because fblualib is not rockspec ready yet.
--- deepcopy routine that assumes the presence of a 'clone' method in user
--- data should be used to deeply copy. This matches the behavior of Torch
--- tensors.
-local function deepcopy(x)
-    local typename = type(x)
-    if typename == "userdata" then
-        return x:clone()
-    end
-    if typename == "table" then
-        local retval = { }
-        for k,v in pairs(x) do
-            retval[deepcopy(k)] = deepcopy(v)
-        end
-        return retval
-    end
-    return x
-end
+local VBCMFACriterion = enigma.cmfa.VBCMFACriterion
 
 --------------------------------------------------
 --[[ Neural Network VBCMFA Trainer ]]--
 -- Trains a neural network with CMFA criterion
 --------------------------------------------------
-local NNCMFATrainer = {}
-
---
-function NNCMFATrainer:new( ... )
-   local o = {}
-   setmetatable(o, self)
-   self.__index = self
-   o:__init(...)
-   return o
-end
+local NNCMFATrainer = klazz("enigma.cmfa.NNVBCMFATrainer")
 
 --
 function NNCMFATrainer:__init(network, cmfa, optState)
    self.network = network
    self.cmfa = cmfa
-   self.criterion = nn.CMFACriterion(cmfa)
+   self.criterion = VBCMFACriterion(cmfa)
 
    print(self.network)
    self.originalOptState = optState
@@ -55,7 +26,7 @@ function NNCMFATrainer:__init(network, cmfa, optState)
       -- and one for biases
       assert(pl.tablex.size(params) == 0 or pl.tablex.size(params) == 2)
       for i, _ in ipairs(params) do
-          self.modulesToOptState[module][i] = deepcopy(optState)
+          self.modulesToOptState[module][i] = Utils.deepcopy(optState)
           if params[i] and params[i].is_bias then
               -- never regularize biases
               self.modulesToOptState[module][i].weightDecay = 0.0
