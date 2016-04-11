@@ -48,7 +48,7 @@ local mobius = {}
 --    iterations = { name = 'exponential-backoff', max = 10, min = 5 },
 --    batchSize = batchSize
 -- }
--- 
+--
 -- [NOTE] Just one level of nesting is supported yet.
 -- This second level will be where a mobius junction will reside
 -- Therefore no nesting of mobius junction
@@ -89,8 +89,8 @@ function MobiusJunction:__mobiuschain(inputs, final)
       outputs[idx] = branch.model:forward(inputs[idx])
    end
 
-   -- final backward results in err and gradients 
-   if final then 
+   -- final backward results in err and gradients
+   if final then
       local errors = {}
       local grads = {}
       for idx, branch in ipairs(self.models) do
@@ -152,7 +152,7 @@ end
 --    iterations = { name = 'exponential-backoff', max = 10, min = 5 },
 --    batchSize = batchSize
 -- }
--- 
+--
 -- [NOTE] Just one level of nesting is supported yet.
 -- This second level will be where a mobius junction will reside
 -- Therefore no nesting of mobius junction
@@ -178,7 +178,7 @@ function MobiusTrainer:train(dataset) -- [TO DO] take dataset not just for prima
    local nbrGlimpses = dataset.data:size(2)
    local gC, gH, gW = dataset.data:size(3), dataset.data:size(4), dataset.data:size(5)
 
-   -- 
+   --
    local indices = torch.randperm(nbrItems):long():split(self.bs)
    -- indices[#indices] = nil
 
@@ -226,7 +226,7 @@ end
 
 -----------------
 --[[ Nothing ]]--
--- 
+--
 -----------------
 local Nothing = { isNothing = true }
 function Nothing:new()
@@ -262,7 +262,7 @@ function Identity:forward(inputs)
 end
 
 function Identity:backward()
-   -- body  
+   -- body
 end
 
 ------------------------
@@ -300,7 +300,7 @@ do -- creating local scope for local variables
 
    -- [TO DO] no checkpoint supported yet
    function NNOptim:__init(model, optimMethod, optState)
-      
+
       self.model = model
       self.optimMethod = optimMethod
 
@@ -354,7 +354,7 @@ do -- creating local scope for local variables
       local curParam
       local function fEvalMod(x)
          return err, curGrad
-      end 
+      end
 
       for curMod, opt in pairs(self.modulesToOptState) do
          on_device_for_module(curMod, function()
@@ -395,7 +395,7 @@ do -- starting local context for various helper functions
 
    --
    function MFAOptim:__init(model)
-      
+
    end
 
    --

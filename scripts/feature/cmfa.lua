@@ -37,6 +37,7 @@ function CMFA:batchtrain(Ybatch, X_starbatch, batchperm, batchIdx, epochs)
    assert(self:_checkDimensions(X_starbatch, f, n))
 
    print(X_starbatch:index(2, torch.linspace(1, n, 20):floor():long()))
+   print(X_starbatch:std(2))
    self:check(Ybatch:contiguous(), "Ybatch")
    self:check(X_starbatch:contiguous(), "X_star")
 
