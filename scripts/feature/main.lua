@@ -773,7 +773,7 @@ do
             net:add(nn.Linear(10 * 4 * 4, f*2))
             net:add(nn.ReLU())
             net:add(nn.Linear(f*2, f/2))
-            net:add(nn.Sigmoid())
+            net:add(nn.Tanh())
             net:add(nn.Linear(f/2, f))
             net:add(nn.Sigmoid())
 
