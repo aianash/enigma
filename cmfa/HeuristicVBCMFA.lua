@@ -40,21 +40,15 @@ function CX:updateGradInput(input, gradOutput)
    return self.gradInput
 end
 
-local HeuristicCMFA = {}
+-----------------------
+--[[ HeuristicVBCMFA ]]--
+-----------------------
+local HeuristicVBCMFA = klazz('enigma.cmfa.HeuristicVBCMFA')
 
 --
-function HeuristicCMFA:new( ... )
-   local o = {}
-   setmetatable(o, self)
-   self.__index = self
-   o:__init(...)
-   return o
-end
-
---
-function HeuristicCMFA:__init(cmfa)
-   local n, s, p, k, f, N = cmfa:_setandgetDims()
-   self.cmfa = cmfa
+function HeuristicVBCMFA:__init(vbcmfa)
+   local n, S, p, k, f, N = vbcmfa:_setandgetDims()
+   self.vbcmfa = vbcmfa
 
    -- Gx layer
    local GxM = nn.Sequential()
@@ -62,9 +56,9 @@ function HeuristicCMFA:__init(cmfa)
    GxM:add(nn.ReLU())
    GxM:add(nn.Linear(20, 50))
    GxM:add(nn.ReLU())
-   GxM:add(nn.Linear(50, s * f))
+   GxM:add(nn.Linear(50, S * f))
    GxM:add(nn.ReLU())
-   GxM:add(nn.CX(self.cmfa.factorLoading.Gm, s, p, f))
+   GxM:add(nn.CX(self.vbcmfa.factorLoading.Gm, S, p, f))
 
    self.GxM = nn.StochasticGradient(GxM, nn.SmoothL1Criterion())
    self.GxM.learningRate = 0.001
@@ -74,9 +68,9 @@ function HeuristicCMFA:__init(cmfa)
    local LzM = nn.Sequential()
    LzM:add(nn.Linear(f, 5))
    LzM:add(nn.ReLU())
-   LzM:add(nn.Linear(5, s * k))
+   LzM:add(nn.Linear(5, S * k))
    LzM:add(nn.ReLU())
-   LzM:add(nn.CX(self.cmfa.factorLoading.Lm, s, p, k))
+   LzM:add(nn.CX(self.vbcmfa.factorLoading.Lm, S, p, k))
 
    self.LzM = nn.StochasticGradient(LzM, nn.SmoothL1Criterion())
    self.LzM.learningRate = 0.001
@@ -84,11 +78,11 @@ function HeuristicCMFA:__init(cmfa)
 end
 
 --
-function HeuristicCMFA:train(Xm, Zm, X_star) -- s x f x n, s x k x n, f x n
-   local cmfa = self.cmfa
-   local _, s, p, k, f = cmfa:_setandgetDims()
-   local Lm, Lcov = cmfa.factorLoading:getL()
-   local Gm, Gcov = cmfa.factorLoading:getG()
+function HeuristicVBCMFA:train(Xm, Zm, X_star) -- s x f x n, s x k x n, f x n
+   local vbcmfa = self.vbcmfa
+   local _, S, p, k, f = vbcmfa:_setandgetDims()
+   local Lm, Lcov = vbcmfa.factorLoading:getL()
+   local Gm, Gcov = vbcmfa.factorLoading:getG()
    local N = X_star:size(2)
 
    print("Normalizing X_star")
@@ -110,14 +104,14 @@ function HeuristicCMFA:train(Xm, Zm, X_star) -- s x f x n, s x k x n, f x n
    end
 
    print("Preparing dataset for learning Gx")
-   trainset.label = torch.bmm(Gm, Xm):view(s*p, N):t() -- N x s*p
+   trainset.label = torch.bmm(Gm, Xm):view(S*p, N):t() -- N x s*p
    trainset.data = nX_star
 
    self.GxM:train(trainset)
    print("Gx's training finished")
 
    print("Preparing dataset for learning Lz")
-   trainset.label = torch.bmm(Lm, Zm):view(s*p, N):t() -- N x s*p
+   trainset.label = torch.bmm(Lm, Zm):view(S*p, N):t() -- N x s*p
    trainset.data = nX_star
 
    self.LzM:train(trainset)
@@ -125,25 +119,25 @@ function HeuristicCMFA:train(Xm, Zm, X_star) -- s x f x n, s x k x n, f x n
 end
 
 --
-function HeuristicCMFA:forward(X_star) -- f x n
+function HeuristicVBCMFA:forward(X_star) -- f x n
    local N = X_star:size(2)
    print(X_star:size())
-   local _, s, p, k, f = self.cmfa:_setandgetDims()
+   local _, S, p, k, f = self.vbcmfa:_setandgetDims()
 
    print("Normalizing X_star")
    local nX_star = X_star:t():clone()
    nX_star:add(self.hmean)
    nX_star:div(self.hstdv)
 
-   local Gx = torch.zeros(s, p, N)
-   local Lz = torch.zeros(s, p, N)
+   local Gx = torch.zeros(S, p, N)
+   local Lz = torch.zeros(S, p, N)
    for i = 1, N do
       local x = nX_star[{ i, {} }]
-      Gx[{ {}, {}, i}] = self.GxM.module:forward(x):view(s, p)
-      Lz[{ {}, {}, i}] = self.LzM.module:forward(x):view(s, p)
+      Gx[{ {}, {}, i}] = self.GxM.module:forward(x):view(S, p)
+      Lz[{ {}, {}, i}] = self.LzM.module:forward(x):view(S, p)
    end
 
    return Gx, Lz -- s x p x n
 end
 
-return HeuristicCMFA
+return HeuristicVBCMFA
