@@ -1,8 +1,11 @@
 require 'torch'
+require 'torchx'
 require 'cephes'
 require 'distributions'
 
 torch.setdefaulttensortype('torch.FloatTensor')
+
+local Set = require 'pl.Set'
 
 local VBCMFA = {}
 
@@ -273,25 +276,6 @@ function VBCMFA:inferQx(Mu, Pt, X_star)
    self:check(Xm, "Xm")
    self:check(Xcov, "Xcov")
 end
-
-
----------------------------------------------
--- To infer parameters for prior distribution
--- of feature vectors i.e. x_i
----------------------------------------------
--- function VBCMFA:inferHyperX()
---    local n, S, p, k, f = self:_setandgetDims()
-
---    local Xm, Xcov = self.conditional:getX()
---    local mu_star, sigma_starI = self.hyper.mu_star, self.hyper.sigma_starI
---    local Qs = self.hidden:getS()
-
---    -- local mu_starT = torch.bmm(Xm:permute(3, 2, 1), Qs:view(n, S, 1))  -- n x f x 1
---    -- mu_star = mu_starT:view(n, f):t():contiguous()  -- f x n
-
---    local XcovQs = Xcov:view(S, f * f):t() * Qs:sum(1):t() / n  -- f*f x 1
---    self.hyper.sigma_starI = XcovQs:view(f, f)
--- end
 
 function VBCMFA:inferHyperX(X_star) -- f x n
    local n, s, p, k, f = self:_setandgetDims()
@@ -624,7 +608,7 @@ end
 -- Pt : n x sn
 -- Mu  : sn x p x n
 ---------------------------------------------
-function VBCMFA:doBirth(parent, Mu, Pt)
+function VBCMFA:addComponent(parent, Mu, Pt)
    local n, s, p, k, d = self:_setandgetDims()
 
    self.s = self.s + 1
@@ -737,13 +721,58 @@ function VBCMFA:loadWorkspace(file)
 end
 
 
-function VBCMFA:handleBirth(Mu, Pt, X_star)
-   local file = 'workspace.dat'
-   local Ftarget = self:calcF(self.debug, Mu, Pt, X_star)
-   local order = self:orderCandidates()
-   self:saveWorkspace(file)
-   self:doBirth(order[1][1], Mu, Pt)
+function VBCMFA:handleRemoval()
+   local n, S, p, k, d = self:_setandgetDims()
+   local Qs = self.hidden:getS()
+   print(Qs:sum(1))
+   local comp2remove = Set(torch.find(Qs:sum(1):lt(100), 1))
+   local comp2keep = Set(torch.find(Qs:sum(1):lt(100), 0))
+   local numDeaths = Set.len(comp2remove)
+
+   if numDeaths == 0 then return false end
+
+   print(string.format("Removing following components = %s\n", comp2remove))
+   self:removeComponent(torch.LongTensor(Set.values(comp2keep)))
+   return true
 end
+
+
+--------------------------------------------------------------
+-- function to remove components from MFA
+-- comp2keep: indicces of components to be kept (LongTensor)
+--------------------------------------------------------------
+function VBCMFA:removeComponent(comp2keep)
+   local n, S, p, k, d = self:_setandgetDims()
+   local Lm, Lcov, _, b = self.factorLoading:getL()
+   local Gm, Gcov, _, beta = self.factorLoading:getG()
+   local Xm, Xcov = self.conditional:getX()
+   local Zm, Zcov = self.hidden:getZ()
+   local Xm, Xcov = self.conditional:getX()
+   local Qs, phim = self.hidden:getS()
+   local PsiI = self.hyper.PsiI
+
+   self.s = comp2keep:size(1)
+   self.Fmatrix = self.Fmatrix:index(2, comp2keep)
+
+   self.hidden.Zm = Zm:index(1, comp2keep)
+   self.hidden.Zcov = Zcov:index(1, comp2keep)
+
+   self.hidden.Qs = Qs:index(2, comp2keep)
+   self.hidden.phim = phim:index(1, comp2keep)
+
+   self.conditional.Xm = Xm:index(1, comp2keep)
+   self.conditional.Xcov = Xcov:index(1, comp2keep)
+
+   self.factorLoading.Lm = Lm:index(1, comp2keep)
+   self.factorLoading.Lcov = Lcov:index(1, comp2keep)
+
+   self.factorLoading.Gm = Gm:index(1, comp2keep)
+   self.factorLoading.Gcov = Gcov:index(1, comp2keep)
+
+   self.factorLoading.b = b:index(1, comp2keep)
+   self.factorLoading.beta = beta:index(1, comp2keep)
+end
+
 
 
 function VBCMFA:check(X, name)

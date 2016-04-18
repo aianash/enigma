@@ -4,16 +4,20 @@
 require 'gnuplot'
 
 local distributions = require 'distributions'
+local display = require 'display'
 local VBCMFA = require 'VBCMFA'
 
-local CFMA = {}
+-- configure display
+display.configure({hostname='127.0.0.1', port=8000})
+
+local CMFA = {}
 
 local parent = VBCMFA:_factory()
-setmetatable(CFMA, parent)
+setmetatable(CMFA, parent)
 parent.__index = parent
 
 
-function CFMA:new(...)
+function CMFA:new(...)
    local o = {}
    setmetatable(o, self)
    self.__index = self
@@ -22,160 +26,162 @@ function CFMA:new(...)
 end
 
 
-function CFMA:__init(cfg)
+function CMFA:__init(cfg)
    self.debug = cfg.debug
    self.pause = cfg.pause
-   self.Fhist = torch.Tensor(1):fill(-1 / 0)
    parent:__init(cfg)
 end
 
 
 -- Mu  means of factor analyzers of intent
 -- Pti responsibilities
-function CFMA:train(Mu, Pt, X_star, epochs)
+function CMFA:train(Mu, Pt, X_star, epochs)
    local n, s, p, k, d, N = self:_setandgetDims()
    self.old = {}
+   self.Fhist = torch.zeros(epochs, 1)
 
    self.conditional.Xm:copy(X_star:repeatTensor(s, 1, 1))
 
+   local order = torch.Tensor(0)
+   local orderingRequired = true
+   local birthStatus = true
+   local cand = 1
+
    for epoch = 1, epochs do
-      print(string.format("\n-------------------------------------------------------\n"))
-      print(string.format("epoch %d running...\n", epoch))
-
-      if self.debug == 1 then
-         self.old.Xcov = self.conditional.Xcov:clone()
-         self.old.Xm = self.conditional.Xm:clone()
-         self.old.Zcov = self.hidden.Zcov:clone()
-         self.old.Zm = self.hidden.Zm:clone()
-         self.old.Lcov = self.factorLoading.Lcov:clone()
-         self.old.Lm = self.factorLoading.Lm:clone()
-         self.old.Gcov = self.factorLoading.Gcov:clone()
-         self.old.Gm = self.factorLoading.Gm:clone()
-         self.old.PsiI = self.hyper.PsiI:clone()
-         self.old.Qs = self.hidden.Qs:clone()
-      end
-
-      for convEpoch = 1, 20 do
-         for subEpoch = 1, 10 do
-            self:infer("Qz", Mu, Pt)
-            self:infer("Qx", Mu, Pt, X_star)
-         end
-
-         for subEpoch = 1, 10 do
-            self:infer("QL", Mu, Pt)
-            self:infer("QG", Mu, Pt)
-            self:infer("Qnu")
-            self:infer("Qomega")
-         end
-
-         self:infer("Qs", Mu, Pt)
-         self:infer("Qpi")
-
-         if epoch % 2 == 0 then
-            for subEpoch = 1, 5 do
-               self:infer("PsiI", Mu, Pt)
-               self:infer("HyperX", X_star)
-            end
-         end
-
-         if self.debug == 1 then
-            self:print("sigma_starI", "hyper")
-            self:print("Zm", "hidden")
-            self:print("Zcov", "hidden")
-            self:print("Xm", "conditional")
-            self:print("Xcov", "conditional")
-            self:print("Lm", "factorLoading")
-            self:print("Lcov", "factorLoading")
-            self:print("Gm", "factorLoading")
-            self:print("Gcov", "factorLoading")
-            self:print("phim", "hidden")
-            self:print("a", "factorLoading")
-            self:print("b", "factorLoading")
-            self:print("alpha", "factorLoading")
-            self:print("beta", "factorLoading")
-         end
-
-      end
-
-      self:infer("Qs", Mu, Pt)
+      self:learn(Mu, Pt, X_star, epoch, 20, 5)
 
       local F, dF = self:calcF(self.debug, Mu, Pt, X_star)
       print(string.format("F = %f\tdF = %f\n", F, dF))
-      self.Fhist = self.Fhist:cat(torch.Tensor({F}))
+      self.Fhist[epoch] = F
 
-      if epoch == 25 then
-         self:handleBirth(Mu, Pt, X_star)
+      if self:converged(F, dF) then
+         print("Converged, Trying birth-death")
+         local deathStatus = false
+
+         if orderingRequired then
+            order = self:orderCandidates()
+            print(string.format("Order of candidates = \n%s\n", order))
+            orderingRequired = false
+         end
+
+         if not birthStatus and cand <= order:squeeze():size(1) then
+            print(string.format("Trying birth with candidate number = %d\tParent = %d\n", cand, order[1][cand]))
+            birthStatus = self:handleBirth(Mu, Pt, X_star, order[1][cand])
+            print(string.format("Birth status = %s\n", tostring(birthStatus)))
+         else
+            print(string.format("Trying removal."))
+            deathStatus = self:handleRemoval()
+            print(string.format("Death status = %s\n", tostring(deathStatus)))
+         end
+
+         if not deathStatus then
+            print("Reordering candidates for birth")
+            order = self:orderCandidates()
+            cand = 1
+            print(string.format("New order of candidates = \n%s\n", order))
+            print(string.format("Trying birth with candidate number = %d\tParent = %d\n", cand, order[1][cand]))
+            birthStatus = self:handleBirth(Mu, Pt, X_star, order[1][cand])
+            print(string.format("Birth status = %s\n", tostring(birthStatus)))
+            if not birthStatus then
+               cand = cand + 1
+            end
+         end
       end
 
-      -- self:printFmatrix()
       collectgarbage()
    end
 
    self:plotFhist()
-   -- self:plotPrediction(X_star)
-
    return self.F, self.factorLoading.Gm, self.factorLoading.Gcov, self.factorLoading.Lm, self.factorLoading.Lcov, self.hidden.Zm, self.conditional.Xm, self.hidden.Qs
 end
 
 
-
-function CFMA:printFmatrix()
-   local Fmat = self.Fmatrix
-   local percentageF = torch.zeros(Fmat:size())
-   local s = Fmat:size(2)
-
-   for i = 1, s do
-      percentageF[{{}, i}] = Fmat[{{}, i}] * 100 / torch.sum(Fmat[{{}, i}])
-   end
-
-   print(string.format("Fmatrix = \n%s", self.Fmatrix))
-   print(string.format("Fmatrix:sum(1) = \n%s", self.Fmatrix:sum(1)))
-   print(string.format("F = %s", self.F))
-   print(string.format("percentageF = \n%s", percentageF))
-   print(string.format("phim = \n%s", self.hidden.phim))
-end
-
-
-function CFMA:plotFhist()
-   gnuplot.figure()
-   gnuplot.grid(true)
-   gnuplot.plot(self.Fhist)
-   gnuplot.xlabel("Epochs")
-   gnuplot.ylabel("Lower Bound F")
-end
-
-
-function CFMA:plotPrediction(X_star)
-   for i = 1, self.s do
-      local mean = self.factorLoading.Lm[i] * self.hidden.Zm[i] + self.factorLoading.Gm[i] * self.conditional.Xm[i]
-      gnuplot.figure()
-      gnuplot.scatter3(mean[1], mean[2], X_star[1])
-      gnuplot.xlabel('Mux')
-      gnuplot.ylabel('Muy')
-      gnuplot.zlabel('X_star')
+function CMFA:converged(target, delta)
+   -- if epoch % 10 == 0 then return true else return false end
+   if delta == math.huge then
+      return false
+   elseif torch.abs(delta / target) < 0.005 then
+      return true
+   else
+      return false
    end
 end
 
 
-function CFMA:infer(tr, ...)
-   -- local t = os.clock()
-   -- print(string.format("\n===== Infer%s =====\n", tr))
+function CMFA:handleBirth(Mu, Pt, X_star, parent)
+   local file = 'workspace.dat'
+   local Ftarget = self:calcF(self.debug, Mu, Pt, X_star)
+   self:saveWorkspace(file)
+   self:addComponent(parent, Mu, Pt)
+   local i = 1
+   while true do
+      self:learn(Mu, Pt, X_star, i, 20, 5)
+      i = i + 1
+      local F, dF = self:calcF(self.debug, Mu, Pt, X_star)
+      if self:converged(F, dF) then break end
+   end
+   local F = self:calcF(self.debug, Mu, Pt, X_star)
+   if F > Ftarget then
+      print(string.format("Keeping the birth\n"))
+      return true
+   else  -- revert to previous state
+      print(string.format("Reverting to previous state\n"))
+      self:loadWorkspace(file)
+      return false
+   end
+end
+
+
+function CMFA:learn(Mu, Pt, X_star, epoch, convEpoch, subEpoch)
+   for convEpoch = 1, 20 do
+      for subEpoch = 1, 10 do
+         self:infer("Qz", Mu, Pt)
+         self:infer("Qx", Mu, Pt, X_star)
+      end
+
+      for subEpoch = 1, 10 do
+         self:infer("QL", Mu, Pt)
+         self:infer("QG", Mu, Pt)
+         self:infer("Qnu")
+         self:infer("Qomega")
+      end
+
+      self:infer("Qs", Mu, Pt)
+      self:infer("Qpi")
+
+      if epoch % 2 == 0 then
+         for subEpoch = 1, 5 do
+            self:infer("PsiI", Mu, Pt)
+            self:infer("HyperX", X_star)
+         end
+      end
+   end
+
+   self:infer("Qs", Mu, Pt)
+end
+
+
+function CMFA:plotFhist()
+   local config = {
+      title = "Lower Bound (F)",
+      lables = {"Epochs", "F"}
+   }
+   local Fsize = self.Fhist:size(1)
+   local data = torch.cat(torch.linspace(1, Fsize, Fsize), self.Fhist, 2)
+   display.plot(data, config)
+end
+
+
+function CMFA:infer(tr, ...)
    self["infer"..tr](self, ...)
-   -- print(string.format("\tt for %s = %f", tr, os.clock() - t))
-   -- print("--------------------------------------------------")
-   -- if self.pause == 1 then io.read() end
 end
 
 
-function CFMA:print(tr, ns)
-   -- print("--------------------------------------------------")
-   -- print(string.format("%s old = \n", tr))
-   -- print(self.old[tr])
+function CMFA:print(tr, ns)
    print(string.format("%s after inference = \n", tr))
    print(self[ns][tr])
-   -- print("--------------------------------------------------")
    if self.pause == 1 then io.read() end
 end
 
 
-return CFMA
+return CMFA
