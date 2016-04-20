@@ -26,12 +26,14 @@ class WikiExtUtil:
 		program = os.path.basename(sys.argv[0])
 		self.logger = logging.getLogger(program)
 		self.dumpFilePath = "../wikidump/enwiki-latest-pages-articles.xml.bz2"
-		self.seedFilePath = "../datafiles/seeds.txt"
-		self.titleListFilePath = "../datafiles/title-list.pkl"
-		self.titleToPageMapFilePath = "../datafiles/title-to-page-map.pkl"
-		self.titleToRedirectTitleMapFilePath = "../datafiles/title-to-redirect-title-map.pkl"
-		self.depthLinksFilePath = "../datafiles/depth1links.txt"
-		self.parseOutputFilePath = "../datafiles/pageoutput.xml"
+		self.seedFilePath = "../datafiles/seeddata/seeds"
+		self.pageRankedSeedFilePath = "../datafiles/seeddata/prseeds"
+		self.titleListFilePath = "../datafiles/wikihelpermaps/title-list.pkl"
+		self.titleToPageMapFilePath = "../datafiles/wikihelpermaps/title-to-page-map.pkl"
+		self.titleToRedirectTitleMapFilePath = "../datafiles/wikihelpermaps/title-to-redirect-title-map.pkl"
+		self.depthLinksFilePath = "../datafiles/seeddata/depth1links"
+		self.pageRankedDepthLinksFilePath = "../datafiles/seeddata/prdepth1links"
+		self.parseOutputFilePath = "../datafiles/preprocesseddata/pageoutput.xml"
 		self.nameSpace = '{http://www.mediawiki.org/xml/export-0.10/}'
 		self.totalPages = 17000000 #number of pages in current wikimpedia dump(8th march)
 
@@ -43,7 +45,7 @@ class WikiExtUtil:
 
 
 
-	def extract_seed_links(self):
+	def extract_seed_links(self, seedFilePath):
 		self.logger.info("Extract seed links begin")
 
 		try:
@@ -53,21 +55,21 @@ class WikiExtUtil:
 			#add root element 
 			outfile.write("<root>\n")
 
-			requiredLinksMap = self.__filter_links(self.seedFilePath)
+			requiredLinksMap = self.__filter_links(seedFilePath)
 
 			self.__parse_wiki_dump(outfile, requiredLinksMap)
 
 		except IOError as e:
 			self.logger.info("IOError: %s: %s" % (e.filename, e.strerror))
+			raise e
 		finally:
 			if outfile is not None:
 				outfile.close()
 			self.logger.info("Extract seed links end")
 
 
-	def get_depth1_links(self):
+	def get_depth1_links(self, seedFilePath, depthLinksFilePath):
 		self.logger.info("Get depthlinks begin")
-
 		# \[\[                 Opening [[
 		#	   (               Capture grp 1
 		#		  [^\[\]|]*    Optional chars, NOT open/close brackets, nor |
@@ -78,9 +80,9 @@ class WikiExtUtil:
 		linkPattern = re.compile(r"\[\[([^\[\]|]*)[^\[\]]*\]\]")
 
 		try:
-			#get seed titles and popLuciferulate array, 
-			seedLinks = [links.rstrip('\n') for links in open(self.seedFilePath)]
-			seedLinks = [links.strip().lower() for links in seedLinks]
+			#get seed titles and populate array, 
+			seedLinks = [links.rstrip('\n') for links in open(seedFilePath)]
+			seedLinks = [links.strip() for links in seedLinks]
 			#print seedLinks
 			
 			depth1Links = []
@@ -92,7 +94,7 @@ class WikiExtUtil:
 
 			#print depth1Links
 			#remove duplicate links and links from seed
-			depth1Links = [links.strip().lower() for links in depth1Links]
+			depth1Links = [links.strip() for links in depth1Links]
 			#depth1Links = [links.decode('utf-8') for links in depth1Links]
 			depth1Links = set(depth1Links) - set(seedLinks) #depth1Links is a set here
 			#print depth1Links
@@ -109,8 +111,12 @@ class WikiExtUtil:
 			self.logger.info("Title to redirection title map loaded")
 
 			#print type(depth1Links)
-
+			linksFound = 0
 			for link in depth1Links:
+				linksFound = linksFound + 1
+				if (linksFound % 500 == 0):
+				 	self.logger.info("Found %d links" % (linksFound))
+				#print i, link
 				#print "link:",link
 				#print type(link)
 				#print titleList[link]
@@ -131,9 +137,14 @@ class WikiExtUtil:
 			#clear memory as soon as it is not required		
 			del titleList[:] 
 			titleToRedirectionTitleMap.clear()
+
+			#links same as seed links may have been included due to redirection
+			#so remove them
+			depthLinksFiltered = depthLinksFiltered - set(seedLinks)
 			
+			#depthLinksFiltered = depth1Links
 			#open output file, creates if none is there
-			depthLinksFileIter = open(self.depthLinksFilePath, 'w+', 1048576) #1MB buffer
+			depthLinksFileIter = open(depthLinksFilePath, 'w+', 1048576) #1MB buffer
 			for link in list(depthLinksFiltered):
 				depthLinksFileIter.write(link + '\n')
 				
@@ -146,14 +157,14 @@ class WikiExtUtil:
 			print exc_value
 			print(repr(traceback.format_tb(exc_traceback)))
 			print("LINE WHERE EXCEPTION OCCURED : ", exc_traceback.tb_lineno)
+			raise e
 		finally:
 			if depthLinksFileIter is not None:
 				depthLinksFileIter.close()
 			self.logger.info("Get depthlinks end")
 
-
 		
-	def extract_depth1_links(self):
+	def extract_depth1_links(self, depthLinksFilePath):
 		self.logger.info("Extract depth1 links begin")
 
 		try:
@@ -161,7 +172,7 @@ class WikiExtUtil:
 			outfile = open(self.parseOutputFilePath, 'a+', 1048576) #1MB buffer
 			outfile.write("\n")
 
-			requiredLinksMap = self.__filter_links(self.depthLinksFilePath)
+			requiredLinksMap = self.__filter_links(depthLinksFilePath)
 
 			self.__parse_wiki_dump(outfile, requiredLinksMap)
 
@@ -169,8 +180,7 @@ class WikiExtUtil:
 			outfile.write("</root>")
 
 		except IOError as e:
-			self.logger.log("IOError: %s: %s" % (e.filename, e.strerror))
-
+			self.logger.info("IOError: %s: %s" % (e.filename, e.strerror))
 		finally:
 			if outfile is not None:
 				outfile.close()
@@ -178,27 +188,36 @@ class WikiExtUtil:
 
 
 	def __filter_links(self, linksFilePath):
-		self.logger.info("Filter links begin")
-		#get depth1 links and populate array, 
-		requiredLinks = [links.rstrip('\n') for links in open(linksFilePath)]
-		requiredLinks = [links.strip().lower() for links in requiredLinks]
-		#print depth1Links
+		try:
+			self.logger.info("Filter links begin")
+			#get depth1 links and populate array, 
+			requiredLinks = [links.rstrip('\n') for links in open(linksFilePath)]
+			requiredLinks = [links.strip() for links in requiredLinks]
+			#print depth1Links
+			print len(requiredLinks)
+			#get required page offsets through title maps
+			self.logger.info("Loading title to page index map")
+			titleToPageMap = pickle.load(open(self.titleToPageMapFilePath, 'rb'))
+			self.logger.info("Title to page index map loaded")
+			requiredLinksMap = {}
 
-		#get required page offsets through title maps
-		self.logger.info("Loading page to title map")
-		titleToPageMap = pickle.load(open(self.titleToPageMapFilePath, 'rb'))
-		self.logger.info("Page to title map loaded")
-		requiredLinksMap = {}
+			for link in requiredLinks:
+				if link in titleToPageMap and titleToPageMap[link] is not None:
+					requiredLinksMap[link] = titleToPageMap[link]
+				else:
+					self.logger.info("Link not found: %s" % link)
 
-		for link in requiredLinks:
-			if link in titleToPageMap and titleToPageMap[link] is not None:
-				requiredLinksMap[link] = titleToPageMap[link]
+			titleToPageMap.clear() #It is a big map clear as soon as it is not required to reclaim memory
+			self.logger.info("Filter links end")
+			return requiredLinksMap
+		except Exception as e:
+			exc_type, exc_value, exc_traceback = sys.exc_info()
+			print exc_type
+			print exc_value
+			print(repr(traceback.format_tb(exc_traceback)))
+			print("LINE WHERE EXCEPTION OCCURED : ", exc_traceback.tb_lineno)
+			raise e
 
-		titleToPageMap.clear() #It is a big map clear as soon as it is not required to reclaim memory
-
-		self.logger.info("Filter links end")
-
-		return requiredLinksMap
 
 
 	def __parse_wiki_dump(self, fileToWrite, linksDict):
@@ -264,9 +283,12 @@ if __name__ == '__main__':
 	wikiExtUtil = WikiExtUtil()
 
 	#parse dump
-	wikiExtUtil.extract_seed_links()
+	wikiExtUtil.extract_seed_links(wikiExtUtil.seedFilePath)
 	time.sleep(10)
-	wikiExtUtil.get_depth1_links()
+	wikiExtUtil.get_depth1_links(wikiExtUtil.seedFilePath, 
+	 	wikiExtUtil.depthLinksFilePath)
 	time.sleep(10) 
-	wikiExtUtil.extract_depth1_links()
+	wikiExtUtil.extract_depth1_links(wikiExtUtil.depthLinksFilePath)
+
+	#perform page rank
 	

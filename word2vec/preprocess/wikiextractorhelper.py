@@ -23,10 +23,9 @@ class WikiExtHelper:
 		program = os.path.basename(sys.argv[0])
 		self.logger = logging.getLogger(program)
 		self.dumpFilePath = "../wikidump/enwiki-latest-pages-articles.xml.bz2"
-		#self.dumpFilePath = "../datafiles/test.xml"
-		self.titleListFilePath = "../datafiles/title-list.pkl"
-		self.titleToPageMapFilePath = "../datafiles/title-to-page-map.pkl"
-		self.titleToRedirectTitleMapFilePath = "../datafiles/title-to-redirect-title-map.pkl"
+		self.titleListFilePath = "../datafiles/wikihelpermaps/title-list.pkl"
+		self.titleToPageMapFilePath = "../datafiles/wikihelpermaps/title-to-page-map.pkl"
+		self.titleToRedirectTitleMapFilePath = "../datafiles/wikihelpermaps/title-to-redirect-title-map.pkl"
 		self.pageStartTag = '<page>'
 		self.pageEndTag = '</page>'		                           
 		self.totalPages = 17000000 #number of pages in current wikimpedia dump(6th march)
@@ -89,7 +88,7 @@ class WikiExtHelper:
 						#title(always present)->redirect(not present for every page->revision(always present)
 						if child.tag == 'title':
 							if child.text is not None:
-								title = child.text.strip().lower()
+								title = child.text.strip()
 								titleToPageMap[title] = (startByte, endByte)
 							continue
 
@@ -99,7 +98,7 @@ class WikiExtHelper:
 						if child.tag == 'redirect':
 							if child.attrib['title'] is not None and title is not None:
 								redirectionTitle = child.attrib['title']
-								titleToRedirectTitleMap[title] = redirectionTitle.strip().lower()
+								titleToRedirectTitleMap[title] = redirectionTitle.strip()
 					#clear page
 					del pageList[:]
 					numPagesParsed += 1
@@ -112,22 +111,35 @@ class WikiExtHelper:
 			# 	dumpFileIter.seek(pageBytes[0])
 			# 	print dumpFileIter.read(pageBytes[1] - pageBytes[0])
 
+			dumpFileIter.close()
 			#end of while, write map and title list to file
 			titleListFileIter = open(self.titleListFilePath, 'wb+')
 			titleList = list(titleToPageMap.keys())
 			pickle.dump(titleList, titleListFileIter)
+			titleList[:]
+			titleListFileIter.close()
 
 			titleToPageMapFileIter = open(self.titleToPageMapFilePath, 'wb+')
 			pickle.dump(titleToPageMap, titleToPageMapFileIter)
+			titleToPageMap.clear()
+			titleToPageMapFileIter.close()
 
 			titleToRedirectTitleMapFileIter = open(self.titleToRedirectTitleMapFilePath, 'wb+')
 			pickle.dump(titleToRedirectTitleMap, titleToRedirectTitleMapFileIter)
+			titleToRedirectTitleMap.clear()
+			titleToRedirectTitleMapFileIter.close()
 
 			#print len(titleToPageMap)
 			#print len(titleToRedirectTitleMap)
 
 		except IOError as e:
 			self.logger.info("IOError: %s: %s" % (e.filename, e.strerror))
+		except Exception as e:
+			exc_type, exc_value, exc_traceback = sys.exc_info()
+			print exc_type
+			print exc_value
+			print(repr(traceback.format_tb(exc_traceback)))
+			print("LINE WHERE EXCEPTION OCCURED : ", exc_traceback.tb_lineno)
 
 		finally:
 			if dumpFileIter is not None:

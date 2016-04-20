@@ -18,9 +18,9 @@ class Preprocessor:
 	def __init__(self):
 		program = os.path.basename(sys.argv[0])
 		self.logger = logging.getLogger(program)
-		self.pageoutputFilePath = "../datafiles/pageoutput.xml"
-		self.plaintextFilePath = "../datafiles/plaintextoutput.txt"
-		self.processedFilePath = "../datafiles/preprocesseddata/processedoutput.txt"
+		self.pageoutputFilePath = "../datafiles/preprocessesddata/pageoutput.xml"
+		self.plaintextFilePath = "../datafiles/preprocesseddata/plaintextoutput.txt"
+		self.processedFilePath = "../datafiles/preprocesseddata/taggedwords.txt"
 		self.nounphrasesFilePath = "../datafiles/preprocesseddata/nounphrases"
 
 		# initialize logger
@@ -50,8 +50,8 @@ class Preprocessor:
 			processedFileIter = open(self.processedFilePath, 'r')
 			nounphrasesFileIter = open(self.nounphrasesFilePath, 'wb+')
 
-			#get noun phrases, combine words that are NN,NNS,NNP,NNPS and are contiguous
-			#Break on full stop
+			#get noun phrases, combine words that are NN,NNS,NNP,NNPS and are 
+			#contiguous, Break on full stop
 			nounPhraseBegin = False
 			nounPhrase = ''
 			while True:
@@ -113,7 +113,7 @@ class Preprocessor:
 				tagged = nltk.pos_tag(tokenized)
 				for word, tag in tagged:
 					wordAndTag = word + ' ' + tag + '\n'
-					processedFileIter.write(tag)
+					processedFileIter.write(wordAndTag)
 				#print tagged
 				#time.sleep(2)
 
@@ -150,8 +150,8 @@ class Preprocessor:
 					if element.tag == 'text':
 						pagePlain += element.text + '\n\n'
 
-						#keep only alphanumerics, full stops and new line othrwise whole file
-						#will be read as a single line
+						#keep only alphanumerics, full stops and new line othrwise 
+						#whole file will be read as a single line
 						pagePlain = re.sub('[^a-zA-Z\.\n]+', ' ', pagePlain)
 						#print pagePlain
 						#print type(pagePlain)
