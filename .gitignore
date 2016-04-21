@@ -1,0 +1,9 @@
+output
+feature-learning-raw
+feature-learning-datasets
+glimpses-test-images
+glimpses
+data
+*.zip
+*.csv
+*.sublime-workspace

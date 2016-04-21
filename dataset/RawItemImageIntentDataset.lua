@@ -28,6 +28,7 @@ function RawItemImageIntentDataset:__init(src, args)
 
    self._labelcsvContent = pl.data.read(pl.path.join(source, labelcsv))
    self.source = source
+   self.size = #self._labelcsvContent
 end
 
 -- returns an iterator with elements
