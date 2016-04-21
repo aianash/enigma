@@ -64,9 +64,15 @@ local trainDataset = torch.load("collar-glimpses-train.bin")
 local I = trainDataset.data
 local M, g, c, h, w = I:size(1), I:size(2), I:size(3), I:size(4), I:size(5)
 local N = M * g
-local h_star, w_star = 3, 3
+local h_star, w_star = 2, 2
 
 normalize(I:view(M * g, c, h, w))
+-- M = 3
+-- g = 3
+-- N = M * g
+-- h = 3
+-- w = 3
+
 
 local Y = torch.zeros(h * w, N)
 local X_star = torch.zeros(h_star * w_star, N)
@@ -80,6 +86,7 @@ for i = 1, M do
       image.save("./glimpses/"..tostring(n).."-1.ppm", src)
       image.save("./glimpses/"..tostring(n).."-2.pgm", grey)
 
+      -- Y[{ {}, n }]:copy(image.scale(grey, w, h))
       Y[{ {}, n }]:copy(grey)
       X_star[{ {}, n }]:copy(image.scale(grey, w_star, h_star))
    end
@@ -106,8 +113,8 @@ local cmfa = CMFA:new{
    datasetSize = N,
    delay = 1,
    forgettingRate = 0.6,
-   debug = 1,
-   pause = 1,
+   debug = 0,
+   pause = 0,
    hardness = 1
 }
 

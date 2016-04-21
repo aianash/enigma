@@ -7,3 +7,8 @@ data
 *.zip
 *.csv
 *.sublime-workspace
+*.bin
+*.dat
+*.ppm
+*.pgm
+*.jpg
