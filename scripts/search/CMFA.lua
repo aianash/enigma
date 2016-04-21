@@ -64,7 +64,7 @@ function CMFA:train(Mu, Pt, X_star, epochs)
             orderingRequired = false
          end
 
-         if not birthStatus and cand <= order:squeeze():size(1) then
+         if not birthStatus and cand <= order:size(2) then
             print(string.format("Trying birth with candidate number = %d\tParent = %d\n", cand, order[1][cand]))
             birthStatus = self:handleBirth(Mu, Pt, X_star, order[1][cand])
             print(string.format("Birth status = %s\n", tostring(birthStatus)))
@@ -134,14 +134,10 @@ end
 
 function CMFA:learn(Mu, Pt, X_star, epoch, convEpoch, subEpoch)
    for convEpoch = 1, 20 do
-      for subEpoch = 1, 10 do
-         self:infer("Qz", Mu, Pt)
-         self:infer("Qx", Mu, Pt, X_star)
-      end
+      self:inferQXZ(Mu, Pt, X_star, 10)
+      self:inferQLG(Mu, Pt, 10)
 
       for subEpoch = 1, 10 do
-         self:infer("QL", Mu, Pt)
-         self:infer("QG", Mu, Pt)
          self:infer("Qnu")
          self:infer("Qomega")
       end

@@ -243,6 +243,54 @@ function VBCMFA:inferPsiI(Mu, Pt)
 end
 
 
+function VBCMFA:inferQXZ(Mu, Pt, X_star, epochs)
+   local n, S, p, k, f = self:_setandgetDims()
+   local Gm, Gcov = self.factorLoading:getG()
+   local Xm, Xcov = self.conditional:getX()
+   local Lm, Lcov = self.factorLoading:getL()
+   local Zm, Zcov = self.hidden:getZ()
+   local PsiI = self.hyper.PsiI
+   local sigma_starI = self.hyper.sigma_starI
+
+   local Sn = Pt:size(2)
+   local pPt = Pt:view(n, Sn, 1):expand(n, Sn, p):permute(2, 3, 1)  -- Sn x p x n
+   local PtMu = torch.cmul(pPt, Mu):sum(1):view(p, n)  -- p x n
+   local sigma_starIX_star = sigma_starI * X_star
+
+   local GmTPsiI           = torch.zeros(S, f, p)
+   local LmTPsiI           = torch.zeros(S, k, p)
+   local GmTPsiIPtMu       = torch.zeros(S, f, n)
+   local GmTPsiILm         = torch.zeros(S, f, k)
+   local LmTPsiIPtMu       = torch.zeros(S, k, n)
+   local LmTPsiIGm         = torch.zeros(S, k, f)
+
+   for s = 1, S do
+      GmTPsiI[s] = Gm[s]:t() * torch.diag(PsiI)
+      local EGTLG = torch.view(torch.view(Gcov[s], p, f * f):t() * PsiI, f, f) + GmTPsiI[s] * Gm[s]
+      Xcov[s] = inverse(sigma_starI + EGTLG)
+
+      LmTPsiI[s] = Lm[s]:t() * torch.diag(PsiI)
+      local ELTGL = torch.view(torch.view(Lcov[s], p, k * k):t() * PsiI, k, k) + LmTPsiI[s] * Lm[s]
+      Zcov[s] = inverse(torch.eye(k) + ELTGL)
+
+      GmTPsiIPtMu[s] = GmTPsiI[s] * PtMu
+      GmTPsiILm[s] = GmTPsiI[s] * Lm[s]
+
+      LmTPsiIPtMu[s] = LmTPsiI[s] * PtMu
+      LmTPsiIGm[s] = LmTPsiI[s] * Gm[s]
+   end
+
+   for epoch = 1, epochs do
+      for s = 1, S do
+         Zm[s] = Zcov[s] * (LmTPsiIPtMu[s] - LmTPsiIGm[s] * Xm[s])
+
+         local GmTPsiIPtMuDiff = GmTPsiIPtMu[s] - GmTPsiILm[s] * Zm[s]
+         Xm[s] = Xcov[s] * (sigma_starIX_star + GmTPsiIPtMuDiff)
+      end
+   end
+end
+
+
 ---------------------------------------------
 -- Pt : n x sn
 -- Mu  : sn x p x n
@@ -276,6 +324,66 @@ function VBCMFA:inferQx(Mu, Pt, X_star)
    self:check(Xm, "Xm")
    self:check(Xcov, "Xcov")
 end
+
+
+function VBCMFA:inferQLG(Mu, Pt, epochs)
+   local n, S, p, k, f = self:_setandgetDims()
+   local Gm, Gcov, alpha, beta = self.factorLoading:getG()
+   local Lm, Lcov, a, b = self.factorLoading:getL()
+   local Xm, Xcov = self.conditional:getX()
+   local Zm, Zcov = self.hidden:getZ()
+   local Qs, phim = self.hidden:getS()
+   local PsiI = self.hyper.PsiI
+
+   local Sn = Pt:size(2)
+   local pPt = Pt:view(n, Sn, 1):expand(n, Sn, p):permute(2, 3, 1)  -- Sn x p x n
+   local PtMu = torch.cmul(pPt, Mu):sum(1):view(p, n)  -- p x n
+
+   local ZmQs          = torch.zeros(S, k, n)
+   local XmQs          = torch.zeros(S, f, n)
+   local XmZmQsT       = torch.zeros(S, f, k)
+   local ZmXmQsT       = torch.zeros(S, k, f)
+   local PsiIPtMuZmQsT = torch.zeros(S, p, k)
+   local PsiIPtMuXmQsT = torch.zeros(S, p, f)
+   local PsiIPtMu      = torch.diag(PsiI) * PtMu
+
+   for s = 1, S do
+      local Qss = Qs[{{}, s}]
+
+      ZmQs[s] = torch.cmul(Zm[s], Qss:contiguous():view(1, n):expand(k, n)) -- k x n
+      local QsZZT = Zcov[s] * torch.sum(Qss) + Zm[s] * ZmQs[s]:t()  -- k x k
+
+      XmQs[s] = torch.cmul(Xm[s], Qss:contiguous():view(1, n):expand(f, n))  -- f x n
+      local QsXXT = Xcov[s] * torch.sum(Qss) + Xm[s] * XmQs[s]:t()  -- f x f
+
+      local Enu = torch.div(b[s], a):pow(-1)  -- k
+      local EOmega = torch.div(beta[s], alpha):pow(-1)  -- f
+
+      for q = 1, p do
+         Lcov[s][q] = inverse(torch.diag(Enu) + QsZZT * PsiI[q])
+         Gcov[s][q] = inverse(torch.diag(EOmega) + QsXXT * PsiI[q])
+      end
+
+      XmZmQsT[s] = Xm[s] * ZmQs[s]:t()
+      PsiIPtMuZmQsT[s] = PsiIPtMu * ZmQs[s]:t()
+
+      ZmXmQsT[s] = Zm[s] * XmQs[s]:t()
+      PsiIPtMuXmQsT[s] = PsiIPtMu * XmQs[s]:t()
+   end
+
+   for epoch = 1, epochs do
+      for s = 1, S do
+         local PsiIPtMudiffQsZms = PsiIPtMuZmQsT[s] - torch.diag(PsiI) * Gm[s] * XmZmQsT[s]  -- p x k
+         local PsiIPtMudiffQsXms = PsiIPtMuXmQsT[s] - torch.diag(PsiI) * Lm[s] * ZmXmQsT[s]  -- p x f
+
+         for q = 1, p do
+            Lm[s][q] = Lcov[s][q] * PsiIPtMudiffQsZms[q]
+            Gm[s][q] = Gcov[s][q] * PsiIPtMudiffQsXms[q]
+         end
+      end
+   end
+end
+
 
 function VBCMFA:inferHyperX(X_star) -- f x n
    local n, s, p, k, f = self:_setandgetDims()
