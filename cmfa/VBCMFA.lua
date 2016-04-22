@@ -191,7 +191,7 @@ function VBCMFA:rho(batchIdx)
       if self._rho then return self._rho
       elseif self.batchIdx == 1 then return 1
       else return (self.batchIdx + self.tau) ^ -self.kappa end
-   else self.batchIdx = batchIdx
+   else self.batchIdx = batchIdx end
 end
 
 --

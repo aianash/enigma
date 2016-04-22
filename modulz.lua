@@ -9,6 +9,8 @@
 local pl = (require 'pl.import_into')()
 pl.stringx.import()
 
+local split = pl.stringx.split
+
 -- create a loading module which
 -- with overloaded __index function
 -- looks for a file and requires it
@@ -79,7 +81,7 @@ return function (primarypkgname)
 
    -- check whether the name in within
    -- primary
-   local function withinprimary(name) return name:sub(1, #primarypkgname) == primarypkgname end   
+   local function withinprimary(name) return name:sub(1, #primarypkgname) == primarypkgname end
 
 
    -------- Global OOP Helper Functions --------
@@ -92,12 +94,12 @@ return function (primarypkgname)
    _G.submodule = function (name)
       assert(withinprimary(name), 'Submodule not inside primary package '..primarypkgname)
 
-      local mod = name:split('.', 2)[2]
+      local mod = split(name, '.', 2)[2]
       assert(mod, 'No name for submodules')
 
       local parent = _G[primarypkgname]
 
-      for _, submod in ipairs(mod:split('.')) do
+      for _, submod in ipairs(split(mod, '.')) do
          parent = getOrCreateSubmodule(submod, parent)
       end
       return parent
@@ -106,13 +108,13 @@ return function (primarypkgname)
    --
    _G.import = function (_name) local name = _name:replace("\n", ""):replace(" ", "")
       assert(withinprimary(name), 'Submodule not inside primary package '..primarypkgname)
-      local mod = name:split('.', 2)[2]
+      local mod = split(name, ".", 2)[2]
       assert(mod, 'No name for submodules')
 
       local parent = _G[primarypkgname]
 
       local returns = {}
-      local mods = mod:split('.')
+      local mods = split(mod, '.')
       local ismultiimport = false
 
       for k, submod in ipairs(mods) do
@@ -120,13 +122,13 @@ return function (primarypkgname)
             if k ~= #mods then
                error(string.format('Multi import not allowed in between, error at [%s] in [%s]', submod, name))
             else
-               local multimods = submod:sub(2, #submod - 1):split(",")
+               local multimods = split(submod:sub(2, #submod - 1), ",")
                for _, multimod in ipairs(multimods) do
                   returns[#returns + 1] = parent[multimod]
                end
             end
             ismultiimport = true
-            break -- after a multi import, no further import is valid anyway 
+            break -- after a multi import, no further import is valid anyway
          else parent = parent[submod]
          end
       end
@@ -139,8 +141,8 @@ return function (primarypkgname)
    --
    _G.klazz = function (name, parentname)
       assert(type(name) == 'string', "Class's name should be string")
-      assert(withinprimary(name), 'Both class and parent class should be with primary pkg = '..primarypkgname) 
-      
+      assert(withinprimary(name), 'Both class and parent class should be with primary pkg = '..primarypkgname)
+
       local mt = { __typename = name }
 
       mt.__index = mt

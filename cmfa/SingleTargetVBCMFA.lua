@@ -1,7 +1,7 @@
 local pl = (require 'pl.import_into')()
 require 'cephes'
 
-local Utils = require 'enigma.Utils'
+local Utils = import 'enigma.Utils'
 
 local kldirichlet = Utils.kldirichlet
 local klgamma = Utils.klgamma

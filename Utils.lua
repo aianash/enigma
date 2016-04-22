@@ -42,7 +42,7 @@ function Utils.logdet(M)
    end)
 
    if not status then
-      posdefify(M)
+      Utils.posdefify(M)
       logdet = 2 * torch.sum(torch.log(torch.diag(torch.potrf(M, 'U'))))
    end
    return logdet
@@ -66,7 +66,7 @@ function Utils.inverse(M, definite, ev)
       print(string.format("INV = %s", inv))
    end
 
-   if definite then posdefify(inv) end
+   if definite then Utils.posdefify(inv) end
    return inv
 end
 
