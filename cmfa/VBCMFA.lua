@@ -239,7 +239,8 @@ function VBCMFA:inferalphabeta( ... ) error(FunctionNotImplemented("inferalphabe
 function VBCMFA:inferPhi( ... ) error(FunctionNotImplemented("inferPhi")) end
 function VBCMFA:inferE_starI( ... ) error(FunctionNotImplemented("inferE_statI")) end
 function VBCMFA:calcF( ... ) error(FunctionNotImplemented("calcF")) end
-function VBCMFA:doBirth( ... ) error(FunctionNotImplemented("doBirth")) end
+function VBCMFA:handleBirth( ... ) error(FunctionNotImplemented("handleBirth")) end
+function VBCMFA:handleDeath( ... ) error(FunctionNotImplemented("handleDeath")) end
 
 function VBCMFA:batchtrain( ... ) error(FunctionNotImplemented("batchtrain")) end
 function VBCMFA:train( ... ) error(FunctionNotImplemented("train")) end
@@ -299,6 +300,45 @@ function VBCMFA:check(X, name)
       end
       os.exit()
    end
+end
+
+
+-- function to order candidates for birth
+function VBCMFA:orderCandidates()
+   local Qs = self.hidden:getS()
+   local Fmatrix = self.Fmatrix
+
+   local free_energy = - torch.cdiv(Fmatrix[{{6, 9}, {}}]:sum(1), Qs:sum(1)) - Fmatrix[{{2, 5}, {}}]:sum(1)
+   local _, order = torch.sort(free_energy, 2, true)
+   return order
+end
+
+
+-- function to save all the parameters in given file
+function VBCMFA:saveWorkspace(file)
+   local workspace = {
+      hidden = self.hidden,
+      conditional = self.conditional,
+      factorLoading = self.factorLoading,
+      hyper = self.hyper,
+      S = self.S,
+      Fmatrix = self.Fmatrix,
+      Fhist = self.Fhist
+   }
+   torch.save(file, workspace)
+end
+
+
+-- function to load parameters from given file
+function VBCMFA:loadWorkspace(file)
+   local workspace = torch.load(file)
+   self.hidden = workspace.hidden
+   self.conditional = workspace.conditional
+   self.factorLoading = workspace.factorLoading
+   self.hyper = workspace.hyper
+   self.S = workspace.S
+   self.Fmatrix = workspace.Fmatrix
+   self.Fhist = workspace.Fhist
 end
 
 return VBCMFA
