@@ -96,6 +96,7 @@ function MultiTargetVBCMFA:inferPsiI(Mu, Pt, debug)
    local Zm, Zcov = self.hidden:getZ()
    local Qs, phim = self.hidden:getS()
    local PsiI = self.hyper.PsiI
+   local rho = self:rho()
 
    local psi = torch.zeros(p, p)
    local sn = Pt:size(2)
@@ -137,8 +138,8 @@ function MultiTargetVBCMFA:inferPsiI(Mu, Pt, debug)
       end
    end
 
-   torch.div(PsiI, torch.diag(psi), n)
-   PsiI:pow(-1)
+   local rhoPsiI = torch.div(torch.diag(psi), n):pow(-1) * rho
+   PsiI:add(rhoPsiI, 1 - rho, PsiI)
 
    -- check PsiI for negative values
    if torch.sum(PsiI[PsiI:lt(0)]) ~= 0 then
@@ -148,6 +149,8 @@ function MultiTargetVBCMFA:inferPsiI(Mu, Pt, debug)
    end
 
    self:check(PsiI, 'PsiI')
+
+   if debug then self:pr('PsiI', 'hyper', true) end
 end
 
 
@@ -159,6 +162,7 @@ function MultiTargetVBCMFA:inferQXZ(Mu, Pt, X_star, epochs, debug)
    local Zm, Zcov = self.hidden:getZ()
    local PsiI = self.hyper.PsiI
    local E_starI = self.hyper.E_starI
+   local rho = self:rho()
 
    local Sn = Pt:size(2)
    local pPt = Pt:view(n, Sn, 1):expand(n, Sn, p):permute(2, 3, 1)  -- Sn x p x n
@@ -174,12 +178,14 @@ function MultiTargetVBCMFA:inferQXZ(Mu, Pt, X_star, epochs, debug)
 
    for s = 1, S do
       GmTPsiI[s] = Gm[s]:t() * torch.diag(PsiI)
+      local rhoXcovs = Xcov[s] * (1 - rho)
       local EGTLG = torch.view(torch.view(Gcov[s], p, f * f):t() * PsiI, f, f) + GmTPsiI[s] * Gm[s]
-      Xcov[s] = inverse(E_starI + EGTLG)
+      Xcov[s]:add(rhoXcovs, rho, inverse(E_starI + EGTLG))
 
       LmTPsiI[s] = Lm[s]:t() * torch.diag(PsiI)
+      local rhoZcovs = Zcov[s] * (1 - rho)
       local ELTGL = torch.view(torch.view(Lcov[s], p, k * k):t() * PsiI, k, k) + LmTPsiI[s] * Lm[s]
-      Zcov[s] = inverse(torch.eye(k) + ELTGL)
+      Zcov[s]:add(rhoZcovs, rho, inverse(torch.eye(k) + ELTGL))
 
       GmTPsiIPtMu[s] = GmTPsiI[s] * PtMu
       GmTPsiILm[s] = GmTPsiI[s] * Lm[s]
@@ -188,6 +194,8 @@ function MultiTargetVBCMFA:inferQXZ(Mu, Pt, X_star, epochs, debug)
       LmTPsiIGm[s] = LmTPsiI[s] * Gm[s]
    end
 
+   local rhoZm = Zm * (1 - rho)
+   local rhoXm = Xm * (1 - rho)
    for epoch = 1, epochs do
       for s = 1, S do
          Zm[s] = Zcov[s] * (LmTPsiIPtMu[s] - LmTPsiIGm[s] * Xm[s])
@@ -195,6 +203,15 @@ function MultiTargetVBCMFA:inferQXZ(Mu, Pt, X_star, epochs, debug)
          local GmTPsiIPtMuDiff = GmTPsiIPtMu[s] - GmTPsiILm[s] * Zm[s]
          Xm[s] = Xcov[s] * (E_starIX_star + GmTPsiIPtMuDiff)
       end
+   end
+   Zm:add(rhoZm, rho, Zm)
+   Xm:add(rhoXm, rho, Xm)
+
+   if debug then
+      self:pr('Xcov', 'conditional', true)
+      self:pr('Xm', 'conditional', true)
+      self:pr('Zcov', 'hidden', true)
+      self:pr('Zm', 'hidden', true)
    end
 end
 
@@ -211,6 +228,7 @@ function MultiTargetVBCMFA:inferQX(Mu, Pt, X_star, debug)
    local Zm = self.hidden:getZ()
    local PsiI = self.hyper.PsiI
    local E_starI = self.hyper.E_starI
+   local rho = self:rho()
 
    local Sn = Pt:size(2)
    local pPt = Pt:view(n, Sn, 1):expand(n, Sn, p):permute(2, 3, 1)  -- Sn x p x n
@@ -222,15 +240,21 @@ function MultiTargetVBCMFA:inferQX(Mu, Pt, X_star, debug)
       local GmPsiI = Gms:t() * torch.diag(PsiI)  -- f x p
 
       local EGTLG = torch.view(torch.view(Gcovs, p, f * f):t() * PsiI, f, f) + GmPsiI * Gms  -- f x f
-      local GmPsiIPtMu = GmPsiI * (PtMu - Lm[s] * Zm[s])  -- f x n
+      local Xcovs = inverse(E_starI + EGTLG)  -- f x f
+      Xcov[s]:add(Xcovs * rho, 1 - rho, Xcov[s])
 
-      -- covariance
-      Xcov[s] = inverse(E_starI + EGTLG)  -- f x f
-      Xm[s] = Xcov[s] * (E_starI * X_star + GmPsiIPtMu)  -- f x n
+      local GmPsiIPtMu = GmPsiI * (PtMu - Lm[s] * Zm[s])  -- f x n
+      local Xms = Xcov[s] * (E_starI * X_star + GmPsiIPtMu)  -- f x n
+      Xm[s]:add(Xms * rho, 1 - rho, Xm[s])
    end
 
    self:check(Xm, 'Xm')
    self:check(Xcov, 'Xcov')
+
+   if debug then
+      self:pr('Xm', 'conditional', true)
+      self:pr('Xcov', 'conditional', true)
+   end
 end
 
 
@@ -242,6 +266,7 @@ function MultiTargetVBCMFA:inferQLG(Mu, Pt, epochs, debug)
    local Zm, Zcov = self.hidden:getZ()
    local Qs, phim = self.hidden:getS()
    local PsiI = self.hyper.PsiI
+   local rho = self:rho()
 
    local Sn = Pt:size(2)
    local pPt = Pt:view(n, Sn, 1):expand(n, Sn, p):permute(2, 3, 1)  -- Sn x p x n
@@ -268,8 +293,11 @@ function MultiTargetVBCMFA:inferQLG(Mu, Pt, epochs, debug)
       local EOmega = torch.div(beta[s], alpha):pow(-1)  -- f
 
       for q = 1, p do
-         Lcov[s][q] = inverse(torch.diag(Enu) + QsZZT * PsiI[q])
-         Gcov[s][q] = inverse(torch.diag(EOmega) + QsXXT * PsiI[q])
+         Lcovsq = inverse(torch.diag(Enu) + QsZZT * PsiI[q])
+         Gcovsq = inverse(torch.diag(EOmega) + QsXXT * PsiI[q])
+
+         Lcov[s][q]:add(Lcovsq * rho, 1 - rho, Lcov[s][q])
+         Gcov[s][q]:add(Gcovsq * rho, 1 - rho, Gcov[s][q])
       end
 
       XmZmQsT[s] = Xm[s] * ZmQs[s]:t()
@@ -285,10 +313,20 @@ function MultiTargetVBCMFA:inferQLG(Mu, Pt, epochs, debug)
          local PsiIPtMudiffQsXms = PsiIPtMuXmQsT[s] - torch.diag(PsiI) * Lm[s] * ZmXmQsT[s]  -- p x f
 
          for q = 1, p do
-            Lm[s][q] = Lcov[s][q] * PsiIPtMudiffQsZms[q]
-            Gm[s][q] = Gcov[s][q] * PsiIPtMudiffQsXms[q]
+            Lmsq = Lcov[s][q] * PsiIPtMudiffQsZms[q]
+            Gmsq = Gcov[s][q] * PsiIPtMudiffQsXms[q]
+
+            Lm[s][q]:add(Lmsq * rho, 1 - rho, Lm[s][q])
+            Gm[s][q]:add(Gmsq * rho, 1 - rho, Gm[s][q])
          end
       end
+   end
+
+   if debug then
+      self:pr('Lm', 'factorLoading', true)
+      self:pr('Lcov', 'factorLoading', true)
+      self:pr('Gm', 'factorLoading', true)
+      self:pr('Gcov', 'factorLoading', true)
    end
 end
 
@@ -298,7 +336,7 @@ function MultiTargetVBCMFA:inferE_starI(X_star, debug) -- f x n
    local Qs = self.hidden:getS()
    local Xm, Xcov = self.conditional:getX()
    local E_starI = self.hyper.E_starI
-   -- local rho = self:rho()
+   local rho = self:rho()
 
    local Ps = torch.sum(Qs, 1)[1] -- s
    local E_star = torch.zeros(f, f)
@@ -315,7 +353,10 @@ function MultiTargetVBCMFA:inferE_starI(X_star, debug) -- f x n
       E_star = E_star + Xcov[t] * Ps[t] + X_star_Xmt * X_star_XmtfQst:t() -- f x f
    end
    E_star:mul(1 / n)
-   self.hyper.E_starI = inverse(E_star)
+
+   E_starI:add(inverse(E_star) * rho, 1 - rho, E_starI)
+
+   if debug then self:pr('E_starI', 'hyper', true) end
 end
 
 
@@ -331,34 +372,38 @@ function MultiTargetVBCMFA:inferQG(Mu, Pt, debug)
    local Zm = self.hidden:getZ()
    local Qs, phim = self.hidden:getS()
    local PsiI = self.hyper.PsiI
+   local rho = self:rho()
 
    local Sn = Pt:size(2)
    local pPt = Pt:view(n, Sn, 1):expand(n, Sn, p):permute(2, 3, 1)  -- Sn x p x n
    local PtMu = torch.cmul(pPt, Mu):sum(1):view(p, n)  -- p x n
 
    for s = 1, S do
-      local Xcovs = Xcov[s]
-      local Xms = Xm[s]
       local Qss = Qs[{{}, s}]
-      local Gcovs = Gcov[s]
-      local Gms = Gm[s]
 
-      local EXmQs = torch.cmul(Xms, Qss:contiguous():view(1, n):expand(f, n))  -- f x n
-      local QsXXT = Xcovs * torch.sum(Qss) + Xms * EXmQs:t()  -- f x f
+      local EXmQs = torch.cmul(Xm[s], Qss:contiguous():view(1, n):expand(f, n))  -- f x n
+      local QsXXT = Xcov[s] * torch.sum(Qss) + Xm[s] * EXmQs:t()  -- f x f
       local betas = beta[s]  -- 1 x f
       local EOmega = torch.div(betas, alpha):pow(-1)  -- f
 
       local PsiIYQsXms = torch.diag(PsiI) * (PtMu - Lm[s] * Zm[s]) * EXmQs:t()  -- p x f
 
-
       for q = 1, p do
-         Gcovs[q] = inverse(torch.diag(EOmega) + QsXXT * PsiI[q])
-         Gms[q] = Gcovs[q] * PsiIYQsXms[q]
+         Gcovsq = inverse(torch.diag(EOmega) + QsXXT * PsiI[q])
+         Gcov[s][q]:add(Gcovsq * rho, 1 - rho, Gcov[s][q])
+
+         Gmsq = Gcov[s][q] * PsiIYQsXms[q]
+         Gm[s][q]:add(Gmsq * rho, 1 - rho, Gm[s][q])
       end
    end
 
    self:check(Gm, 'Gm')
    self:check(Gcov, 'Gcov')
+
+   if debug then
+      self:pr('Gm', 'factorLoading', true)
+      self:pr('Gcov', 'factorLoading', true)
+   end
 end
 
 
@@ -374,6 +419,7 @@ function MultiTargetVBCMFA:inferQL(Mu, Pt, debug)
    local Xm = self.conditional:getX()
    local Qs = self.hidden:getS()
    local PsiI = self.hyper.PsiI
+   local rho = self:rho()
 
    local Sn = Pt:size(2)
    local pPt = Pt:view(n, Sn, 1):expand(n, Sn, p):permute(2, 3, 1)  -- Sn x p x n
@@ -390,13 +436,21 @@ function MultiTargetVBCMFA:inferQL(Mu, Pt, debug)
       local PsiIYQsZms = torch.diag(PsiI) * (PtMu - Gm[s] * Xm[s]) * ZmQs:t()  -- p x k
 
       for q = 1, p do
-         Lcov[s][q] = inverse(torch.diag(Enu) + QsZZT * PsiI[q])
-         Lm[s][q] = Lcov[s][q] * PsiIYQsZms[q]
+         Lcovsq = inverse(torch.diag(Enu) + QsZZT * PsiI[q])
+         Lcov[s][q]:add(Lcovsq * rho, 1 - rho, Lcov[s][q])
+
+         Lmsq = Lcov[s][q] * PsiIYQsZms[q]
+         Lm[s][q]:add(Lmsq * rho, 1 - rho, Lm[s][q])
       end
    end
 
    self:check(Lm, 'Lm')
    self:check(Lcov, 'Lcov')
+
+   if debug then
+      self:pr('Lm', 'factorLoading', true)
+      self:pr('Lcov', 'factorLoading', true)
+   end
 end
 
 
@@ -411,6 +465,7 @@ function MultiTargetVBCMFA:inferQZ(Mu, Pt, debug)
    local Gm = self.factorLoading:getG()
    local Xm = self.conditional:getX()
    local PsiI = self.hyper.PsiI
+   local rho = self:rho()
 
    local Sn = Pt:size(2)
    local pPt = Pt:view(n, Sn, 1):expand(n, Sn, p):permute(2, 3, 1)  -- Sn x p x n
@@ -424,30 +479,40 @@ function MultiTargetVBCMFA:inferQZ(Mu, Pt, debug)
 
       -- covariance
       local Eql = torch.view(torch.view(Lcovs, p, k * k):t() * PsiI, k, k) + LmTPsiI * Lms
-      Zcov[s] = inverse(torch.eye(k) + Eql)
+      Zcovs = inverse(torch.eye(k) + Eql)
+      Zcov[s]:add(Zcovs * rho, 1 - rho, Zcov[s])
 
       -- mean
-      Zm[s] = Zcov[s] * LmTPsiI * (PtMu - Gm[s] * Xm[s])
+      Zms = Zcov[s] * LmTPsiI * (PtMu - Gm[s] * Xm[s])
+      Zm[s]:add(Zms * rho, 1 - rho, Zm[s])
    end
 
    self:check(Zm, 'Zm')
    self:check(Zcov, 'Zcov')
+
+   if debug then
+      self:pr('Zm', 'hidden', true)
+      self:pr('Zcov', 'hidden', true)
+   end
 end
 
 
 function MultiTargetVBCMFA:inferQnu(debug)
    local n, S, p, k, f = self:_setandgetDims()
    local Lm, Lcov, a, b = self.factorLoading:getL()
+   local rho = self:rho()
 
    self.factorLoading.a = self.hyper.a_star + 0.5 * p
 
    for s = 1, S do
-      local Lms = Lm[s]  -- p x k
-      local Lcovs = Lcov[s]  -- p x k x k
+      local ELq = Lcov[s]:sum(1):view(k, k):diag():view(1, k) + torch.pow(Lm[s], 2):sum(1)  -- 1 x k
+      local bs = ELq:t() * 0.5 + self.hyper.b_star
+      b[s] = bs * rho + b[s] * (1 - rho)
+   end
 
-      local ELq = Lcovs:sum(1):view(k, k):diag():view(1, k) + torch.pow(Lms, 2):sum(1)  -- 1 x k
-
-      b[s] = ELq:t() * 0.5 + self.hyper.b_star
+   if debug then
+      self:pr('a', 'factorLoading', true)
+      self:pr('b', 'factorLoading', true)
    end
 end
 
@@ -455,9 +520,13 @@ end
 function MultiTargetVBCMFA:inferQpi(debug)
    local n, s, p, k, f = self:_setandgetDims()
    local Qs, phim = self.hidden:getS()
+   local rho = self:rho()
 
    local phi_starm = torch.ones(s) * self.hyper.phi_star / s
-   phim:add(phi_starm, torch.sum(Qs, 1):squeeze())
+   local rhophim = torch.add(phi_starm, torch.sum(Qs, 1):squeeze()) * rho
+   phim:add(rhophim, 1 - rho, phim)
+
+   if debug then self:pr('phim', 'hidden', true) end
 end
 
 
@@ -466,16 +535,19 @@ end
 function MultiTargetVBCMFA:inferQomega(debug)
    local n, S, p, k, d = self:_setandgetDims()
    local Gm, Gcov, alpha, beta = self.factorLoading:getG()
+   local rho = self:rho()
 
    self.factorLoading.alpha = self.hyper.alpha_star + 0.5 * p
 
    for s = 1, S do
-      local Gms = Gm[s]  -- p x d
-      local Gcovs = Gcov[s]  -- p x d x d
+      local EGq = Gcov[s]:sum(1):view(d, d):diag():view(1, d) + torch.pow(Gm[s], 2):sum(1)  -- 1 x d
+      local betas = EGq * 0.5 + self.hyper.beta_star
+      beta[s] = betas * rho + beta[s] * (1 - rho)
+   end
 
-      local EGq = Gcovs:sum(1):view(d, d):diag():view(1, d) + torch.pow(Gms, 2):sum(1)  -- 1 x d
-
-      beta[s] = EGq * 0.5 + self.hyper.beta_star
+   if debug then
+      self:pr('alpha', 'factorLoading', true)
+      self:pr('beta', 'factorLoading', true)
    end
 end
 
@@ -698,7 +770,6 @@ end
 function MultiTargetVBCMFA:handleDeath()
    local n, S, p, k, d = self:_setandgetDims()
    local Qs = self.hidden:getS()
-   print(Qs:sum(1))
    local comp2remove = Set(torch.find(Qs:sum(1):lt(100), 1))
    local comp2keep = Set(torch.find(Qs:sum(1):lt(100), 0))
    local numDeaths = Set.len(comp2remove)
@@ -749,7 +820,7 @@ function MultiTargetVBCMFA:removeComponent(comp2keep)
    local Qs, phim = self.hidden:getS()
    local PsiI = self.hyper.PsiI
 
-   self.s = comp2keep:size(1)
+   self.S = comp2keep:size(1)
    self.Fmatrix = self.Fmatrix:index(2, comp2keep)
 
    self.hidden.Zm = Zm:index(1, comp2keep)
