@@ -16,8 +16,12 @@ local inverse     = Utils.inverse
 local MultiTargetVBCMFA, parent = klazz('enigma.cmfa.MultiTargetVBCMFA', 'enigma.cmfa.VBCMFA')
 
 function MultiTargetVBCMFA:__init(cfg)
-   self.hardness = 0.5
+   self.hardness = cfg.hardness or 0.5
    parent:__init(cfg)
+
+   local n, S, p, k, f, N = self:_setandgetDims()
+   self.GmpX_star_N = torch.zeros(p, N)
+   self.PtMuDiff_N = torch.zeros(p, N)
 end
 
 
@@ -552,6 +556,95 @@ function MultiTargetVBCMFA:inferQomega(debug)
 end
 
 
+function MultiTargetVBCMFA:calcFbatch(Mu, Pt, X_star)
+   local n, S, p, k, f, N = self:_setandgetDims()
+   local Lm, Lcov = self.factorLoading:getL()
+   local Gm, Gcov = self.factorLoading:getG()
+   local Zm, Zcov = self.hidden:getZ()
+   local Xm, Xcov = self.conditional:getX()
+   local Qs, phim = self.hidden:getS()
+   local a_star, b_star, alpha_star, beta_star, E_starI, phi_star, PsiI = self.hyper:get()
+
+   local Fmatrix = self.Fmatrix
+   local PsiI_M = torch.diag(PsiI)
+
+   local Ps = torch.sum(Qs, 1)[1]
+   local X_star_Xm = X_star:view(1, f, n):expand(S, f, n) - Xm -- s x d x n
+   local Qsmod = Qs:clone()
+   Qsmod[Qs:eq(0)] = 1
+
+   local logDetE_star = - logdet(E_starI)
+
+   local digamphim = cephes.digamma(phim) -- s
+   local digsumphim = cephes.digamma(torch.sum(phim)) -- 1
+
+   local sn = Pt:size(2)
+   local pPt = Pt:view(1, sn, n):expand(p, sn, n):permute(2, 1, 3)  -- sn x p x n
+
+   for s = 1, S do
+      local Lms, Lcovs = Lm[s], Lcov[s]
+      local Gms, Gcovs = Gm[s], Gcov[s]
+      local Xms, Xcovs = Xm[s], Xcov[s]
+      local Zms, Zcovs = Zm[s], Zcov[s]
+      local Qss = Qs[{{}, s}] -- n
+      local Qsmods = Qsmod[{{}, s}] -- n
+      local X_star_Xms = X_star_Xm[s] -- f x n
+      local Fmatrixs = Fmatrix[{{}, s}]
+
+      local logDet2piPsiI = - torch.log(PsiI):sum() + p * math.log(2 * math.pi) -- 1
+
+      Fmatrixs[6] = Fmatrixs[6] + torch.sum(torch.cmul(Qss, - torch.log(Qsmods) + torch.ones(n) * (digamphim[s] - digsumphim)))
+
+      -- Fmatrix[7]
+      local kQss = Qss:contiguous():view(1, n):expand(k, n) -- k x n
+      local ZmtkQss = torch.cmul(Zms, kQss) -- k x n
+      local QssEzzT = Zcovs * Ps[s] + Zms * ZmtkQss:t()
+      Fmatrixs[7] = Fmatrixs[7]
+                  + 0.5 * k * torch.sum(Qss)
+                  + 0.5 * Ps[s] * logdet(Zcovs)
+                  - 0.5 * torch.trace(QssEzzT)
+
+      -- Fmatrix[8]
+      local fQss = Qss:contiguous():view(1, n):expand(f, n) -- f x n
+      local X_star_XmsfQss = torch.cmul(X_star_Xms, fQss) -- f x n
+      local QssExxT = Xcovs * Ps[s] + X_star_Xms * X_star_XmsfQss:t()
+      Fmatrixs[8] = Fmatrixs[8]
+                  + 0.5 * f * torch.sum(Qss)
+                  - 0.5 * Ps[s] * logDetE_star
+                  + 0.5 * Ps[s] * logdet(Xcovs)
+                  - 0.5 * torch.trace(E_starI * QssExxT)
+
+      -- Fmatrix[9]
+      local ELTPsiIG = Lms:t() * PsiI_M * Gms -- k x f
+      local EzTLTPsiIGx = torch.sum(torch.cmul(Zms, ELTPsiIG * Xms), 1) -- 1 x n
+
+      local ELTPsiIL = torch.view(torch.view(Lcovs, p, k * k):t() * PsiI, k, k)
+                           + Lms:t() * PsiI_M * Lms -- k x k
+      local EzTLTPsiILz = torch.sum(torch.cmul(Zms, ELTPsiIL * Zms), 1) -- 1 x n
+                           + (torch.view(ELTPsiIL, 1, k * k) * torch.view(Zcovs:t():contiguous(), k * k, 1)):squeeze() -- 1
+
+      local EGTPsiIG = torch.view(torch.view(Gcovs, p, f * f):t() * PsiI, f, f) -- f x f
+                     + Gms:t() * PsiI_M * Gms -- f x f
+      local ExTGTPsiIGx = torch.sum(torch.cmul(Xms, EGTPsiIG * Xms), 1) -- 1 x n
+                        + (torch.view(EGTPsiIG, 1, f * f) * torch.view(Xcovs:t():contiguous(), f * f, 1)):squeeze() -- 1
+
+      local ELz = Lms * Zms
+      local EGx = Gms * Xms
+
+      local MuDiff = Mu - (ELz * 2 + EGx * 2):view(1, p, n):expand(sn, p, n)  -- sn x p x n
+      local PtMuTPsiI = torch.bmm(PsiI_M:view(1, p, p):expand(sn, p, p), torch.cmul(pPt, Mu))  -- sn x p x n
+
+      local E = - torch.cmul(PtMuTPsiI, MuDiff):sum(1):sum(2):view(1, n) * 0.5
+                - EzTLTPsiIGx * 2 * 0.5
+                - EzTLTPsiILz * 0.5
+                - ExTGTPsiIGx * 0.5
+
+      Fmatrixs[9] = Fmatrixs[9] + torch.cmul(E, Qss):sum() - 0.5 * Ps[s] * logDet2piPsiI
+   end
+
+end
+
+
 ---------------------------------------------
 -- Pt : n x sn
 -- Mu  : sn x p x n
@@ -570,9 +663,8 @@ function MultiTargetVBCMFA:calcF(Mu, Pt, X_star, debug) -- p x n, f x n
 
    local Ps = torch.sum(Qs, 1)[1] -- s
 
-   local logDetE_star = - logdet(E_starI) -- change the name to sigma_star
+   local logDetE_star = - logdet(E_starI)
 
-   local X_star_Xm = X_star:view(1, d, n):expand(s, d, n) - Xm -- s x d x n
    local Qsmod = Qs:clone()
    Qsmod[Qs:eq(0)] = 1
 
@@ -582,9 +674,6 @@ function MultiTargetVBCMFA:calcF(Mu, Pt, X_star, debug) -- p x n, f x n
    Fmatrix1 = - kldirichlet(phim, torch.ones(s) * phi_star / s)
 
    local F_old = self.F
-
-   local sn = Pt:size(2)
-   local pPt = Pt:view(1, sn, n):expand(p, sn, n):permute(2, 1, 3)  -- sn x p x n
 
    --
    for t = 1, s do
@@ -599,7 +688,6 @@ function MultiTargetVBCMFA:calcF(Mu, Pt, X_star, debug) -- p x n, f x n
       local Qst = Qs[{ {}, t }] -- n x 1
       local Qsmodt = Qsmod[{ {}, t }] -- n x 1
       local Fmatrixt = Fmatrix[{ {}, t }]
-      local X_star_Xmt = X_star_Xm[t] -- f x n
 
       local logDet2piPsiI = - torch.log(PsiI):sum() + p * math.log(2 * math.pi) -- 1
 
@@ -630,54 +718,6 @@ function MultiTargetVBCMFA:calcF(Mu, Pt, X_star, debug) -- p x n, f x n
                - (torch.diag(Gcovt[q]) + torch.pow(Gmt[q], 2)):dot(alpha_betat)
       end
       Fmatrixt[5] = f5 / 2
-
-      -- Fmatrix[6]
-      Fmatrixt[6] = torch.sum(torch.cmul(Qst, - torch.log(Qsmodt) + torch.ones(n) * (digamphim[t] - digsumphim)))
-
-      -- Fmatrix[7]
-      local kQst = Qst:contiguous():view(1, n):expand(k, n) -- k x n
-      local ZmtkQst = torch.cmul(Zmt, kQst) -- k x n
-      local QstEzzT = Zcovt * Ps[t] + Zmt * ZmtkQst:t()
-      Fmatrixt[7] = 0.5 * k * torch.sum(Qst)
-                    + 0.5 * Ps[t] * logdet(Zcovt)
-                    - 0.5 * torch.trace(QstEzzT)
-
-      -- Fmatrix[8]
-      local fQst = Qst:contiguous():view(1, n):expand(d, n) -- d x n
-      local X_star_XmtfQst = torch.cmul(X_star_Xmt, fQst) -- d x n
-      local QstExxT = Xcovt * Ps[t] + X_star_Xmt * X_star_XmtfQst:t() -- d x d
-
-      Fmatrixt[8] = 0.5 * d * torch.sum(Qst)
-                    - 0.5 * Ps[t] * logDetE_star
-                    + 0.5 * Ps[t] * logdet(Xcovt)
-                    - 0.5 * torch.trace(E_starI * QstExxT)
-
-      -- Fmatrix[9]
-      local ELTPsiIG = Lmt:t() * PsiI_M * Gmt -- k x d
-      local EzTLTPsiIGx = torch.sum(torch.cmul(Zmt, ELTPsiIG * Xmt), 1) -- 1 x n
-
-      local ELTPsiIL = torch.view(torch.view(Lcovt, p, k * k):t() * PsiI, k, k)
-                           + Lmt:t() * PsiI_M * Lmt -- k x k
-      local EzTLTPsiILz = torch.sum(torch.cmul(Zmt, ELTPsiIL * Zmt), 1) -- 1 x n
-                           + (torch.view(ELTPsiIL, 1, k * k) * torch.view(Zcovt:t():contiguous(), k * k, 1)):squeeze() -- 1
-
-      local EGTPsiIG = torch.view(torch.view(Gcovt, p, d * d):t() * PsiI, d, d) -- d x d
-                     + Gmt:t() * PsiI_M * Gmt -- d x d
-      local ExTGTPsiIGx = torch.sum(torch.cmul(Xmt, EGTPsiIG * Xmt), 1) -- 1 x n
-                        + (torch.view(EGTPsiIG, 1, d * d) * torch.view(Xcovt:t():contiguous(), d * d, 1)):squeeze() -- 1
-
-      local ELz = Lmt * Zmt
-      local EGx = Gmt * Xmt
-
-      local MuDiff = Mu - (ELz * 2 + EGx * 2):view(1, p, n):expand(sn, p, n)  -- sn x p x n
-      local PtMuTPsiI = torch.bmm(PsiI_M:view(1, p, p):expand(sn, p, p), torch.cmul(pPt, Mu))  -- sn x p x n
-
-      local E = - torch.cmul(PtMuTPsiI, MuDiff):sum(1):sum(2):view(1, n) * 0.5
-                - EzTLTPsiIGx * 2 * 0.5
-                - EzTLTPsiILz * 0.5
-                - ExTGTPsiIGx * 0.5
-
-      Fmatrixt[9] = torch.cmul(E, Qst):sum() - 0.5 * Ps[t] * logDet2piPsiI
    end
 
    if debug then print(string.format('Fmatrix = %s\n', Fmatrix)) end
@@ -689,12 +729,31 @@ function MultiTargetVBCMFA:calcF(Mu, Pt, X_star, debug) -- p x n, f x n
 end
 
 
+function MultiTargetVBCMFA:resetF()
+   self.Fmatrix = torch.zeros(9, self.S)
+end
+
+
+function MultiTargetVBCMFA:computeRandomStuff(Mu, Pt, X_star, batchperm)
+   local n, S, p, k, d, N = self:_setandgetDims()
+   local sn = Pt:size(2)
+
+   local pPt = Pt:view(1, sn, n):expand(p, sn, n):permute(2, 1, 3)
+   local EGxs = Gmp * Xmp
+   local MuDiff = Mu - EGxs:view(1, p, n):expand(sn, p, n)
+   local PtMuDiff = torch.cmul(pPt, MuDiff):sum(1):view(p, n)
+
+   self.PtMuDiff_N:indexCopy(2, batchperm, PtMuDiff)
+   self.GmpX_star_N:indexCopy(2, batchperm, Gmp * X_star)
+end
+
+
 ---------------------------------------------
 -- Pt : n x sn
 -- Mu  : sn x p x n
 ---------------------------------------------
 function MultiTargetVBCMFA:addComponent(parent, Mu, Pt, X_star)
-   local n, S, p, k, d = self:_setandgetDims()
+   local n, S, p, k, d, N = self:_setandgetDims()
 
    self.S = S + 1
    local S = self.S
@@ -716,21 +775,13 @@ function MultiTargetVBCMFA:addComponent(parent, Mu, Pt, X_star)
    local Qsp = Qs[{{}, parent}]
    local bp, betap = b[parent], beta[parent]
 
-
-   local pPt = Pt:view(1, sn, n):expand(p, sn, n):permute(2, 1, 3)  -- sn x p x n
-
-   local EGxs = Gmp * Xmp  -- p x n
-   local MuDiff = Mu - EGxs:view(1, p, n):expand(sn, p, n)  -- sn x p x n
-
    local cov = Lmp * Lmp:t() + Gmp * inverse(self.hyper.E_starI) * Gmp:t() + torch.diag(PsiI:pow(-1))
    local delta0 = distributions.mvn.rnd(torch.zeros(1, p), cov)
-   local delta = Gmp * X_star + delta0:view(p, 1):expand(p, n)
-
-   local PtMuDiff = torch.cmul(pPt, MuDiff):sum(1):view(p, n)
-   local assign = torch.sign(torch.cmul(delta, PtMuDiff):sum(1))
+   local delta = self.GmpX_star_N + delta0:view(p, 1):expand(p, N)
+   local assign = torch.sign(torch.cmul(delta, self.PtMuDiff_N):sum(1))
 
    -- update Qs
-   local Qss = torch.zeros(n)
+   local Qss = torch.zeros(N)
    Qss[assign:eq(1)] = Qsp[assign:eq(1)] * self.hardness
    Qsp[assign:eq(1)] = Qsp[assign:eq(1)] * (1 - self.hardness)
    Qss[assign:eq(-1)] = Qsp[assign:eq(-1)] * (1 - self.hardness)
@@ -784,25 +835,10 @@ end
 
 function MultiTargetVBCMFA:handleBirth(Mu, Pt, X_star, parent)
    local file = 'workspace.dat'
-   local Ftarget = self:calcF(Mu, Pt, X_star, true)
    self:saveWorkspace(file)
+
+   print(string.format('Adding component for parent = %d', parent))
    self:addComponent(parent, Mu, Pt, X_star)
-   local i = 1
-   while true do
-      self:learn(Mu, Pt, X_star, i, 20, 5)
-      i = i + 1
-      local F, dF = self:calcF(Mu, Pt, X_star, true)
-      if self:converged(F, dF) then break end
-   end
-   local F = self:calcF(Mu, Pt, X_star, true)
-   if F > Ftarget then
-      print(string.format("Keeping the birth\n"))
-      return true
-   else  -- revert to previous state
-      print(string.format("Reverting to previous state\n"))
-      self:loadWorkspace(file)
-      return false
-   end
 end
 
 
