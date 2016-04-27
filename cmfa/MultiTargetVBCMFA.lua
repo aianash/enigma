@@ -18,10 +18,6 @@ local MultiTargetVBCMFA, parent = klazz('enigma.cmfa.MultiTargetVBCMFA', 'enigma
 function MultiTargetVBCMFA:__init(cfg)
    self.hardness = cfg.hardness or 0.5
    parent:__init(cfg)
-
-   local n, S, p, k, f, N = self:_setandgetDims()
-   self.GmpX_star_N = torch.zeros(p, N)
-   self.PtMuDiff_N = torch.zeros(p, N)
 end
 
 
@@ -730,21 +726,7 @@ end
 
 
 function MultiTargetVBCMFA:resetF()
-   self.Fmatrix = torch.zeros(9, self.S)
-end
-
-
-function MultiTargetVBCMFA:computeRandomStuff(Mu, Pt, X_star, batchperm)
-   local n, S, p, k, d, N = self:_setandgetDims()
-   local sn = Pt:size(2)
-
-   local pPt = Pt:view(1, sn, n):expand(p, sn, n):permute(2, 1, 3)
-   local EGxs = Gmp * Xmp
-   local MuDiff = Mu - EGxs:view(1, p, n):expand(sn, p, n)
-   local PtMuDiff = torch.cmul(pPt, MuDiff):sum(1):view(p, n)
-
-   self.PtMuDiff_N:indexCopy(2, batchperm, PtMuDiff)
-   self.GmpX_star_N:indexCopy(2, batchperm, Gmp * X_star)
+   self.Fmatrix = torch.zeros(9, self.dims.S)
 end
 
 
@@ -752,13 +734,13 @@ end
 -- Pt : n x sn
 -- Mu  : sn x p x n
 ---------------------------------------------
-function MultiTargetVBCMFA:addComponent(parent, Mu, Pt, X_star)
+function MultiTargetVBCMFA:addComponent(parent)
    local n, S, p, k, d, N = self:_setandgetDims()
 
-   self.S = S + 1
-   local S = self.S
+   S = S + 1
+   self.dims.S = S
 
-   local sn = Pt:size(2)
+   -- local sn = Pt:size(2)
 
    local Lm, Lcov, _, b = self.factorLoading:getL()
    local Gm, Gcov, _, beta = self.factorLoading:getG()
@@ -775,18 +757,7 @@ function MultiTargetVBCMFA:addComponent(parent, Mu, Pt, X_star)
    local Qsp = Qs[{{}, parent}]
    local bp, betap = b[parent], beta[parent]
 
-   local cov = Lmp * Lmp:t() + Gmp * inverse(self.hyper.E_starI) * Gmp:t() + torch.diag(PsiI:pow(-1))
-   local delta0 = distributions.mvn.rnd(torch.zeros(1, p), cov)
-   local delta = self.GmpX_star_N + delta0:view(p, 1):expand(p, N)
-   local assign = torch.sign(torch.cmul(delta, self.PtMuDiff_N):sum(1))
-
-   -- update Qs
-   local Qss = torch.zeros(N)
-   Qss[assign:eq(1)] = Qsp[assign:eq(1)] * self.hardness
-   Qsp[assign:eq(1)] = Qsp[assign:eq(1)] * (1 - self.hardness)
-   Qss[assign:eq(-1)] = Qsp[assign:eq(-1)] * (1 - self.hardness)
-   Qsp[assign:eq(-1)] = Qsp[assign:eq(-1)] * self.hardness
-   self.hidden.Qs = self.hidden.Qs:cat(Qss)
+   self.hidden.Qs = self.hidden.Qs:cat(torch.zeros(n))
 
    -- phim
    phim[parent] = phim[parent] / 2
@@ -818,27 +789,16 @@ function MultiTargetVBCMFA:addComponent(parent, Mu, Pt, X_star)
 end
 
 
-function MultiTargetVBCMFA:handleDeath()
-   local n, S, p, k, d = self:_setandgetDims()
-   local Qs = self.hidden:getS()
-   local comp2remove = Set(torch.find(Qs:sum(1):lt(100), 1))
-   local comp2keep = Set(torch.find(Qs:sum(1):lt(100), 0))
-   local numDeaths = Set.len(comp2remove)
-
-   if numDeaths == 0 then return false end
-
-   print(string.format('Removing following components = %s\n', comp2remove))
-   self:removeComponent(torch.LongTensor(Set.values(comp2keep)))
-   return true
-end
 
 
-function MultiTargetVBCMFA:handleBirth(Mu, Pt, X_star, parent)
-   local file = 'workspace.dat'
+
+function MultiTargetVBCMFA:handleBirth(parent)
+   print(string.format('parent = %d\n', parent))
+   local file = 'cfmaworkspace.dat'
    self:saveWorkspace(file)
 
    print(string.format('Adding component for parent = %d', parent))
-   self:addComponent(parent, Mu, Pt, X_star)
+   self:addComponent(parent)
 end
 
 
@@ -856,7 +816,7 @@ function MultiTargetVBCMFA:removeComponent(comp2keep)
    local Qs, phim = self.hidden:getS()
    local PsiI = self.hyper.PsiI
 
-   self.S = comp2keep:size(1)
+   self.dims.S = comp2keep:size(1)
    self.Fmatrix = self.Fmatrix:index(2, comp2keep)
 
    self.hidden.Zm = Zm:index(1, comp2keep)

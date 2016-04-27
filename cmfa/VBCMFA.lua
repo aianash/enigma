@@ -138,6 +138,7 @@ function VBCMFA:__init(cfg)
       end
    }
 
+
    self.removal = cfg.removal
 
    self.batchIdx = -1
@@ -187,6 +188,7 @@ end
 
 --
 function VBCMFA:rho(batchIdx)
+   if true then return 1 end
    if not batchIdx then
       if self._rho then return self._rho
       elseif self.batchIdx == 1 then return 1
@@ -197,14 +199,15 @@ end
 --
 function VBCMFA:_setandgetDims(cfg)
    if cfg then
-      self.n = cfg.batchSize
-      self.S = cfg.numComponents
-      self.p = cfg.outputVectorSize
-      self.k = cfg.factorVectorSize
-      self.f = cfg.inputVectorSize
-      self.N = cfg.datasetSize
+      self.dims = {}
+      self.dims.n = cfg.batchSize
+      self.dims.S = cfg.numComponents
+      self.dims.p = cfg.outputVectorSize
+      self.dims.k = cfg.factorVectorSize
+      self.dims.f = cfg.inputVectorSize
+      self.dims.N = cfg.datasetSize
    end
-   return self.n, self.S, self.p, self.k, self.f, self.N
+   return self.dims.n, self.dims.S, self.dims.p, self.dims.k, self.dims.f, self.dims.N
 end
 
 --
@@ -321,9 +324,12 @@ function VBCMFA:saveWorkspace(file)
       conditional = self.conditional,
       factorLoading = self.factorLoading,
       hyper = self.hyper,
-      S = self.S,
+      S = self.dims.S,
       Fmatrix = self.Fmatrix,
-      Fhist = self.Fhist
+      Fhist = self.Fhist,
+      Qs_N = self.Qs_N,
+      Xm_N = self.Xm_N,
+      Zm_N = self.Zm_N
    }
    torch.save(file, workspace)
 end
@@ -332,13 +338,41 @@ end
 -- function to load parameters from given file
 function VBCMFA:loadWorkspace(file)
    local workspace = torch.load(file)
-   self.hidden = workspace.hidden
-   self.conditional = workspace.conditional
-   self.factorLoading = workspace.factorLoading
-   self.hyper = workspace.hyper
-   self.S = workspace.S
+   self.hidden.Zm = workspace.hidden.Zm
+   self.hidden.Zcov = workspace.hidden.Zcov
+
+   self.hidden.Qs = workspace.hidden.Qs
+   self.hidden.phim = workspace.hidden.phim
+
+   self.conditional.Xm = workspace.conditional.Xm
+   self.conditional.Xcov = workspace.conditional.Xcov
+
+   self.factorLoading.Lm = workspace.factorLoading.Lm
+   self.factorLoading.Lcov = workspace.factorLoading.Lcov
+
+   self.factorLoading.a = workspace.factorLoading.a
+   self.factorLoading.b = workspace.factorLoading.b
+
+   self.factorLoading.Gm = workspace.factorLoading.Gm
+   self.factorLoading.Gcov = workspace.factorLoading.Gcov
+
+   self.factorLoading.alpha = workspace.factorLoading.alpha
+   self.factorLoading.beta = workspace.factorLoading.beta
+
+   self.hyper.a_star = workspace.hyper.a_star
+   self.hyper.b_star = workspace.hyper.b_star
+   self.hyper.alpha_star = workspace.hyper.alpha_star
+   self.hyper.beta_star = workspace.hyper.beta_star
+   self.hyper.E_starI = workspace.hyper.E_starI
+   self.hyper.phi_star = workspace.hyper.phi_star
+   self.hyper.PsiI = workspace.hyper.PsiI
+
+   self.dims.S = workspace.S
    self.Fmatrix = workspace.Fmatrix
    self.Fhist = workspace.Fhist
+   self.Qs_N = workspace.Qs_N
+   self.Xm_N = workspace.Xm_N
+   self.Zm_N = workspace.Zm_N
 end
 
 return VBCMFA
