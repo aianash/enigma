@@ -43,6 +43,7 @@ CMFA training batch %d
    self:rho(batchIdx)
    print(string.format('rho = %f\n', self:rho()))
 
+   local pause = false
    local debug = false
 
    local Mubatch = Ybatch.Mu
@@ -74,6 +75,7 @@ CMFA training batch %d
    self:calcFbatch(Mubatch, Ptbatch, X_starbatch)
    self:computeBirthFactors(Mubatch, Ptbatch, X_starbatch, batchperm)
 
+   self.Xm_N:indexCopy(3, batchperm, self.conditional.Xm)
    self.Zm_N:indexCopy(3, batchperm, self.hidden.Zm)
    self.Qs_N:indexCopy(1, batchperm, self.hidden.Qs)
 
@@ -169,7 +171,7 @@ end
 
 
 function CMFA:converged(target, delta)
-   if delta == math.huge or torch.abs(delta / target) > 0.005 then
+   if delta == math.huge or torch.abs(delta / target) > 0.05 then
       return false
    else
       return true
@@ -193,7 +195,7 @@ function CMFA:handleBirthDeath()
          if not self.lastbirthsuccess and self.candidx <= self.order:size(2) - 1 then
             self.candidx = self.candidx + 1
             local newcand = self.order[1][self.candidx]
-            print(string.format('Birth with parent = %d', newcand))
+            print(string.format('Last birth failed. Trying birth with new candidate = %d', newcand))
             self.Fold = F
             self:handleBirth(newcand)
             self.inbirthprocess = true
@@ -207,8 +209,9 @@ function CMFA:handleBirthDeath()
 
          if orderanddobirth then
             self.order = self:orderCandidates()
+            print(string.format('New order of birth candidates = \n%s', self.order))
             self.candidx = 1
-            print(string.format('Birth with parent = %d', self.candidx))
+            print(string.format('Reordering and trying birth with candidate = %d', self.order[1][self.candidx]))
             self.Fold = F
             self:handleBirth(self.order[1][self.candidx])
             self.inbirthprocess = true
@@ -231,8 +234,17 @@ function CMFA:handleBirthDeath()
             return true -- ask nn to revert things
          end
       end
+      print(string.format('\n'))
    else
-      print('Not converged')
+      print(string.format('Not converged\n'))
+      if self.inbirthprocess then
+         if self.Qs_N:sum(1):lt(10):sum() > 0 then
+            print('Responsibilities are below threshold. Reverting previous birth.')
+            self:loadWorkspace('cfmaworkspace.dat')
+            self.lastbirthsuccess = false
+            self.inbirthprocess = false
+         end
+      end
       return false
    end
 end
