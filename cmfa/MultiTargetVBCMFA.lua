@@ -17,6 +17,8 @@ local MultiTargetVBCMFA, parent = klazz('enigma.cmfa.MultiTargetVBCMFA', 'enigma
 
 function MultiTargetVBCMFA:__init(cfg)
    self.hardness = cfg.hardness or 0.5
+   self.workspacefile = cfg.workspacefile or 'cmfaworkspace.dat'
+   self.maxbirthtries = cfg.maxbirthtries or 3
    parent:__init(cfg)
 end
 
@@ -812,11 +814,16 @@ end
 
 function MultiTargetVBCMFA:handleBirth(parent)
    print(string.format('parent = %d\n', parent))
-   local file = 'cfmaworkspace.dat'
-   self:saveWorkspace(file)
+   self:saveWorkspace(self.workspacefile)
 
    print(string.format('Adding component for parent = %d', parent))
    self:addComponent(parent)
+end
+
+
+function MultiTargetVBCMFA:revertBirth()
+   self:loadWorkspace(self.workspacefile)
+   os.remove(self.workspacefile)
 end
 
 

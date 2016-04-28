@@ -20,6 +20,9 @@ function CMFA:__init(cfg)
    self.order = torch.Tensor(0)
    self.candidx = 0
 
+   self.lastbirthcandidate = false
+   self.birthtries = 0
+
    self.Fold = math.huge
    self.GmpX_star_N = torch.zeros(S, p, N)
    self.PtMuDiff_N = torch.zeros(S, p, N)
@@ -27,6 +30,11 @@ end
 
 
 function CMFA:batchtrain(Ybatch, X_starbatch, batchperm, batchIdx, epochs)
+   if self.birthtries >= self.maxbirthtries then
+      print(string.format('Tried birth %d times. Exiting.', self.maxbirthtries))
+      return 'DONE'
+   end
+
    local n, s, p, k, f, N = self:_setandgetDims()
    -- assert(self:_checkDimensions(Ybatch, p, n))
    -- assert(self:_checkDimensions(X_starbatch, f, n))
@@ -171,7 +179,7 @@ end
 
 
 function CMFA:converged(target, delta)
-   if delta == math.huge or torch.abs(delta / target) > 0.05 then
+   if delta == math.huge or torch.abs(delta / target) > 0.005 then
       return false
    else
       return true
@@ -187,6 +195,8 @@ function CMFA:handleBirthDeath()
    local F, dF = self:calcF()
    print(string.format('F = %f\tdF = %f\n', F, dF))
 
+   local todo = ''
+
    if self:converged(F, dF) then
       if not self.inbirthprocess then
          print('No birth convergence. Trying birth-death.')
@@ -200,6 +210,7 @@ function CMFA:handleBirthDeath()
             self:handleBirth(newcand)
             self.inbirthprocess = true
             orderanddobirth = false
+            if self.candidx == self.order:size(2) then self.lastbirthcandidate = true end
          else
             print('Trying death')
             self.deathstatus = self:handleDeath()
@@ -217,21 +228,28 @@ function CMFA:handleBirthDeath()
             self.inbirthprocess = true
          end
 
-         return false
+         todo = 'SAVE'
       else
          print('Birth convergence. Checking for lower bound')
          if F > self.Fold then
             print('Keeping birth')
-            self.Fold = F
             self.lastbirthsuccess = true
             self.inbirthprocess = false
-            return false -- ask nn to keep things
+            self.birthtries = 0
+            self.lastbirthcandidate = false
+            todo = 'KEEP'
          else
             print('Reverting previous birth')
             self.lastbirthsuccess = false
-            self:loadWorkspace('cfmaworkspace.dat') -- revert cmfa to prev state
+            self:revertBirth() -- revert cmfa to prev state
             self.inbirthprocess = false
-            return true -- ask nn to revert things
+
+            if self.lastbirthcandidate then
+               self.birthtries = self.birthtries + 1
+               self.lastbirthcandidate = false
+               print(string.format('Increased number of tries. Tries = %d\n', self.birthtries))
+            end
+            todo = 'REVERT'
          end
       end
       print(string.format('\n'))
@@ -240,13 +258,21 @@ function CMFA:handleBirthDeath()
       if self.inbirthprocess then
          if self.Qs_N:sum(1):lt(10):sum() > 0 then
             print('Responsibilities are below threshold. Reverting previous birth.')
-            self:loadWorkspace('cfmaworkspace.dat')
+            self:revertBirth()
             self.lastbirthsuccess = false
+
             self.inbirthprocess = false
+            if self.lastbirthcandidate then
+               self.birthtries = self.birthtries + 1
+               self.lastbirthcandidate = false
+               print(string.format('Increased number of tries. Tries = %d\n', self.birthtries))
+            end
          end
+         todo = 'REVERT'
       end
-      return false
    end
+
+   return todo
 end
 
 
