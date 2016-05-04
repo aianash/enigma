@@ -28,12 +28,12 @@ char readVocabFile[MAX_STRING_LEN];
 
 int usecbow = 0;
 int minRedLimit = 1;
-int minWordCount = 5; // remove big noun phrases 
+int minWordCount = 1; // remove big noun phrases 
 int hierSoftmax = 0;
 int negSample = 5;
-int numThreads = 20;
+int numThreads = 5;
 int wordWindow = 5;
-int storeVecAsBinary = 1;
+int storeVecAsBinary = 0;
 
 
 float alpha = 0.025;

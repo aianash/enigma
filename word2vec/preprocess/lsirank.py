@@ -6,6 +6,7 @@ import sys
 import logging
 import re
 import traceback
+import heapq
 
 from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
@@ -166,6 +167,11 @@ class Lsirank:
 		try:
 			#generate dictionary
 			wordDict = Dictionary(self.__getTokensFromFile(readFilePath))
+			# #filter infrequent words
+			# wordDict.filter_extremes(no_below = 10, no_above = 0.5)
+			# #redefine wordids 
+			# wordDict.compactify()
+			#save dictionary
 			wordDict.save(dictFilePath)
 
 		except IOError as e:
@@ -220,7 +226,7 @@ class Lsirank:
 			docCorpusTfidf = MmCorpus(tfidfCorpusFilePath)
 
 			#generate lsi model and indexes
-			docModelLsi = LsiModel(corpus=docCorpusTfidf, id2word=wordDict, num_topics=50)
+			docModelLsi = LsiModel(corpus=docCorpusTfidf, id2word=wordDict, num_topics=100)
 			#TODO: check for Similarity as matrix similarity can take huge space
 			docModelLsiIndex = similarities.MatrixSimilarity(docModelLsi[docCorpusTfidf]) 
 
@@ -242,9 +248,9 @@ class Lsirank:
 			self.logger.info("Generate lsi model ans index end")
 
 
-	def getLsiRankForDocs(self, tfidfCorpusFilePath, lsiModelFilePath, lsiIndexFilePath,
+	def getLsiRankForDocsMaxSim(self, tfidfCorpusFilePath, lsiModelFilePath, lsiIndexFilePath,
 		rankFilePath, trainTitleMapFilePath, testTitleMapFilePath):
-		self.logger.info("Get lsi rank begin")
+		self.logger.info("Get lsi rank max score begin")
 
 		try:
 			docCorpusTfidf = MmCorpus(tfidfCorpusFilePath)
@@ -273,8 +279,9 @@ class Lsirank:
 				lsiRankMap[testIndexToTitleMap[testIndex]] = (trainIndexToTitleMap[maxScoreIndex], maxSimScore)
 				testIndex = testIndex + 1
 
-			for link, seedscoretuple in sorted(lsiRankMap.items(), key = lambda x:x[1][1], reverse = True):
-				rankFileIter.write(link + ' | ' + seedscoretuple[0] + ' | ' + str(seedscoretuple[1]) + '\n')
+			for link, seedScoreTuple in sorted(lsiRankMap.items(), key = lambda x:x[1][1], reverse = True):
+				#rankFileIter.write(link + ' | ' + seedScoreTuple[0] + ' | ' + str(seedScoreTuple[1]) + '\n')
+				rankFileIter.write(link + '\n')
 
 		except IOError as e:
 			self.logger.info("IOError: %s: %s" % (e.filename, e.strerror))
@@ -289,7 +296,66 @@ class Lsirank:
 		finally:
 			if rankFileIter is not None:
 				rankFileIter.close()
-			self.logger.info("Get lsi rank end")
+			self.logger.info("Get lsi rank max score end")
+
+
+	def getLsiRankForDocsAvgNSim(self, tfidfCorpusFilePath, lsiModelFilePath, lsiIndexFilePath,
+		rankFilePath, trainTitleMapFilePath, testTitleMapFilePath, numDocsAvg):
+		self.logger.info("Get lsi rank avg score begin")
+
+		try:
+			docCorpusTfidf = MmCorpus(tfidfCorpusFilePath)
+			docLsiMode = LsiModel.load(lsiModelFilePath)
+			docLsiIndex = similarities.MatrixSimilarity.load(lsiIndexFilePath)
+			lsiRankMap = {}
+
+			#get lsi vectors for test docs
+			docCorpusLsi = docLsiMode[docCorpusTfidf]
+
+			#get similarity score
+			simScore = docLsiIndex[docCorpusLsi]
+
+			#load title maps
+			trainIndexToTitleMap = pickle.load(open(trainTitleMapFilePath, 'rb'))
+			testIndexToTitleMap = pickle.load(open(testTitleMapFilePath, 'rb'))
+
+			#save similarity score for further analysis
+			#dimes of sim score is num Test Titles X num Train Titles
+			rankFileIter = open(rankFilePath, 'w+')
+			testIndex = 0
+			for numpyScoreArray in list(simScore):
+				#convert numpy array to list
+				scoreList = numpyScoreArray.tolist()
+				# get numDocsAvg indexes with largest value
+				maxScoreIndexes = heapq.nlargest(numDocsAvg, range(len(scoreList)), scoreList.__getitem__)
+				#calculate average score and update most similar doc list
+				avgSimScore = 0
+				similarDocList = []
+				for index in maxScoreIndexes:
+					avgSimScore = avgSimScore + scoreList[index]
+					similarDocList.append((trainIndexToTitleMap[index], scoreList[index]))
+				avgSimScore = avgSimScore / numDocsAvg
+				#update rank map
+				lsiRankMap[testIndexToTitleMap[testIndex]] = (similarDocList, avgSimScore)
+				testIndex = testIndex + 1
+
+			for link, seedListScoreTuple in sorted(lsiRankMap.items(), key = lambda x:x[1][1], reverse = True):
+				rankFileIter.write(link + ' | ' + str(seedListScoreTuple[0]) + ' | ' + str(seedListScoreTuple[1]) + '\n\n')
+
+		except IOError as e:
+			self.logger.info("IOError: %s: %s" % (e.filename, e.strerror))
+			raise e
+		except Exception as e:
+			exc_type, exc_value, exc_traceback = sys.exc_info()
+			print exc_type
+			print exc_value
+			print(repr(traceback.format_tb(exc_traceback)))
+			print("LINE WHERE EXCEPTION OCCURED : ", exc_traceback.tb_lineno)
+			raise e
+		finally:
+			if rankFileIter is not None:
+				rankFileIter.close()
+			self.logger.info("Get lsi rank avg score end")
 
 
 	def trainLsiModel(self):
@@ -326,10 +392,14 @@ class Lsirank:
 			#generate tfidf corpus from test data
 			self.generateTfidfCorpus(self.wordDictFilePath, self.testLemmatizedTextFilePath,
 				self.testDocCorpusTfidfFilePath)
-			#generate lsi model and indexes
-			self.getLsiRankForDocs(self.testDocCorpusTfidfFilePath, self.lsiModelFilePath, 
+			#generate lsi model and indexes based on max score
+			self.getLsiRankForDocsMaxSim(self.testDocCorpusTfidfFilePath, self.lsiModelFilePath, 
 				self.lsiIndexFilePath, self.testDocRanksFilePath, self.trainIndexToTitleMapFilePath,
 				self.testIndexToTitleMapFilePath)
+			# #generate lsi model and indexes based on avg max score
+			# self.getLsiRankForDocsAvgNSim(self.testDocCorpusTfidfFilePath, self.lsiModelFilePath, 
+			# 	self.lsiIndexFilePath, self.testDocRanksFilePath, self.trainIndexToTitleMapFilePath,
+			# 	self.testIndexToTitleMapFilePath, 3)
 
 		except Exception as e:
 			raise e

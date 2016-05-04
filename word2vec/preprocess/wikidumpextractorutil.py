@@ -27,6 +27,7 @@ class WikiExtUtil:
 		self.logger = logging.getLogger(program)
 		self.dumpFilePath = "../wikidump/enwiki-latest-pages-articles.xml.bz2"
 		self.seedFilePath = "../datafiles/seeddata/seeds"
+		self.newseedFilePath = "../datafiles/seeddata/newseeds"
 		self.pageRankedSeedFilePath = "../datafiles/seeddata/prseeds"
 		self.titleListFilePath = "../datafiles/wikihelpermaps/title-list.pkl"
 		self.titleToPageMapFilePath = "../datafiles/wikihelpermaps/title-to-page-map.pkl"
@@ -279,16 +280,44 @@ class WikiExtUtil:
 			self.logger.info("IOError: %s: %s" % (e.filename, e.strerror))
 
 
+	def get_pages_for_given_seeds(self, seedFilePath, outFilePath):
+		self.logger.info("Get pages for seeds begin")
+
+		try:
+			#open output file, creates if none is there. For seedlinks rewrite the file
+			outfile = open(outFilePath, 'w+', 1048576) #1MB buffer
+
+			#add root element 
+			outfile.write("<root>\n")
+
+			requiredLinksMap = self.__filter_links(seedFilePath)
+
+			self.__parse_wiki_dump(outfile, requiredLinksMap)
+
+			#add end root element
+			outfile.write("\n</root>")
+
+		except IOError as e:
+			self.logger.info("IOError: %s: %s" % (e.filename, e.strerror))
+			raise e
+		finally:
+			if outfile is not None:
+				outfile.close()
+			self.logger.info("Extract seed links end")
+
+
 if __name__ == '__main__':
 	wikiExtUtil = WikiExtUtil()
 
 	#parse dump
-	wikiExtUtil.extract_seed_links(wikiExtUtil.seedFilePath)
-	time.sleep(10)
-	wikiExtUtil.get_depth1_links(wikiExtUtil.seedFilePath, 
-	 	wikiExtUtil.depthLinksFilePath)
-	time.sleep(10) 
-	wikiExtUtil.extract_depth1_links(wikiExtUtil.depthLinksFilePath)
+	# wikiExtUtil.extract_seed_links(wikiExtUtil.seedFilePath)
+	# time.sleep(10)
+	# wikiExtUtil.get_depth1_links(wikiExtUtil.seedFilePath, 
+	#  	wikiExtUtil.depthLinksFilePath)
+	# time.sleep(10) 
+	# wikiExtUtil.extract_depth1_links(wikiExtUtil.depthLinksFilePath)
+	wikiExtUtil.get_pages_for_given_seeds(wikiExtUtil.newseedFilePath, 
+		wikiExtUtil.parseOutputFilePath)
 
 	#perform page rank
 	

@@ -6,6 +6,11 @@ import time
 import os
 import sys
 import logging
+import traceback
+
+from nltk.corpus import stopwords
+from nltk.stem import WordNetLemmatizer
+from nltk.tokenize import word_tokenize
 
 try:
 	import xml.etree.cElementTree as et
@@ -18,10 +23,11 @@ class Preprocessor:
 	def __init__(self):
 		program = os.path.basename(sys.argv[0])
 		self.logger = logging.getLogger(program)
-		self.pageoutputFilePath = "../datafiles/preprocessesddata/pageoutput.xml"
-		self.plaintextFilePath = "../datafiles/preprocesseddata/plaintextoutput.txt"
-		self.processedFilePath = "../datafiles/preprocesseddata/taggedwords.txt"
+		self.pageoutputFilePath = "../datafiles/preprocesseddata/pageoutput.xml"
+		self.plaintextFilePath = "../datafiles/preprocesseddata/plaintextoutput"
+		self.processedFilePath = "../datafiles/preprocesseddata/taggedwords"
 		self.nounphrasesFilePath = "../datafiles/preprocesseddata/nounphrases"
+		self.lemmatizedTextFilePath = "../datafiles/preprocesseddata/lemmatizedText"
 
 		# initialize logger
 		logging.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s')
@@ -33,9 +39,10 @@ class Preprocessor:
 
 		try:
 			# open content file
-			#self.__generate_plain_text()
-			#self.__extract_tags()
-			self.__get_noun_phrases()
+			self.__generate_plain_text()
+			self.__lemmatize_text()
+			self.__extract_tags()
+			self.__get_noun_phrases_and_adjectives()
 
 		except Exception as e:
 			self.logger.info(str(e))
@@ -100,15 +107,74 @@ class Preprocessor:
 			self.logger.info("Get noun phrases end")
 
 
+	def __get_noun_phrases_and_adjectives(self):
+		self.logger.info("Get noun phrases begin")
+
+		try:
+			readFileIter = open(self.processedFilePath, 'r')
+			writeFileIter = open(self.nounphrasesFilePath, 'wb+')
+
+			#get noun phrases, combine words that are NN,NNS,NNP,NNPS and are 
+			#contiguous, Break on full stop
+			nounPhraseBegin = False
+			nounPhrase = ''
+			while True:
+				line = readFileIter.readline()
+				if not line: #end of file
+					if nounPhraseBegin == True:
+						writeFileIter.write(nounPhrase) 
+						nounPhraseBegin = False
+					break
+
+				word, tag = line.split()
+				#print word, tag
+				word, tag = word.strip().lower(), tag.strip()
+				#print repr(tag)
+
+				#check for adjective
+				if tag == 'JJ' or tag == 'JJR' or tag == 'JJS':
+					if nounPhraseBegin == True:
+						writeFileIter.write(nounPhrase + ' ')
+						nounPhraseBegin = False
+
+					writeFileIter.write(word + ' ')
+					continue
+				#continue till we find nouns
+				elif tag == 'NN' or tag == 'NNS' or tag == 'NNP' or tag == 'NNPS':
+					if nounPhraseBegin == False:
+						nounPhraseBegin = True
+						nounPhrase = word
+						continue
+
+					nounPhrase += '_' + word
+					continue
+				#other tags
+				else:
+					if nounPhraseBegin == True:
+						writeFileIter.write(nounPhrase + ' ')
+						nounPhraseBegin = False
+
+					continue
+
+		except IOError as e:
+			self.logger.info("IOError: %s: %s" % (e.filename, e.strerror))
+		finally:
+			if readFileIter is not None:
+				readFileIter.close()
+			if writeFileIter is not None:
+				writeFileIter.close()
+			self.logger.info("Get noun phrases end")
+
+
 	def __extract_tags(self):
 		self.logger.info("Extract tags begin")
 
 		try:
 			# open content file
-			plaintextFileIter = open(self.plaintextFilePath, 'r')
+			lemmatizedTextFileIter = open(self.lemmatizedTextFilePath, 'r')
 			processedFileIter = open(self.processedFilePath, 'w+')
 
-			for line in plaintextFileIter.readlines():
+			for line in lemmatizedTextFileIter.readlines():
 				tokenized = nltk.word_tokenize(line)
 				tagged = nltk.pos_tag(tokenized)
 				for word, tag in tagged:
@@ -120,8 +186,8 @@ class Preprocessor:
 		except IOError as e:
 			self.logger.info("IOError: %s: %s" % (e.filename, e.strerror))
 		finally:
-			if plaintextFileIter is not None:
-				plaintextFileIter.close()
+			if lemmatizedTextFileIter is not None:
+				lemmatizedTextFileIter.close()
 			if processedFileIter is not None:
 				processedFileIter.close()
 			self.logger.info("Extract tags end")
@@ -166,6 +232,46 @@ class Preprocessor:
 				if plaintextFileIter is not None:
 					plaintextFileIter.close()
 				self.logger.info("Generate plain text end")
+
+	def __lemmatize_text(self):
+		self.logger.info("Lemmatize text begin")
+
+		try:
+			readFileIter = open(self.plaintextFilePath, 'r')
+			writeFileIter = open(self.lemmatizedTextFilePath, 'w+')
+			
+			#remove stop words
+			stopWords = set(stopwords.words('english'))
+			stopWords.add('ref')
+			stopWords.add('jpg')
+			lemmatizer = WordNetLemmatizer()
+
+			for line in readFileIter.readlines():
+				tokenized = word_tokenize(line)
+				filteredStopWordsTokens = [word for word in tokenized if not word in stopWords]
+				filteredSmallWordsTokens = [word for word in filteredStopWordsTokens if len(word) > 2]
+				lammetizedTokens = [lemmatizer.lemmatize(word) for word in filteredSmallWordsTokens]
+				for word in lammetizedTokens:
+					writeFileIter.write(word + ' ')
+				writeFileIter.write('\n')
+
+		except IOError as e:
+			self.logger.info("IOError: %s: %s" % (e.filename, e.strerror))
+			raise e
+		except Exception as e:
+			exc_type, exc_value, exc_traceback = sys.exc_info()
+			print exc_type
+			print exc_value
+			print(repr(traceback.format_tb(exc_traceback)))
+			print("LINE WHERE EXCEPTION OCCURED : ", exc_traceback.tb_lineno)
+			raise e
+		finally:
+			if readFileIter is not None:
+				readFileIter.close()
+			if writeFileIter is not None:
+				writeFileIter.close()
+			self.logger.info("Lemmatize text end")
+
 
 
 if __name__ == '__main__':
