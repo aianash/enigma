@@ -34,6 +34,8 @@ int negSample = 5;
 int numThreads = 5;
 int wordWindow = 5;
 int storeVecAsBinary = 0;
+int contextKnown = 0;
+int wordContextLen = 20;
 
 
 float alpha = 0.025;
@@ -623,7 +625,7 @@ void* runTrainThread(void* threadId) {
 		exit(1);
 	}
 	fseek(trainFileIter, trainFileSize / (long long)numThreads * (long long)threadId, 
-			SEEK_SET);
+			SEEK_SET); // check for middle of some word
 	//training loop
 	while(1) {
 		if (wordCount - lastWordCount > 10000) {
@@ -639,6 +641,7 @@ void* runTrainThread(void* threadId) {
 				alpha = seedAlpha * 0.0001;
 			}
 		}
+
 		//sentence cration loop
 		if(sentenceLength == 0) {
 			while(1) {
@@ -928,6 +931,280 @@ void* runTrainThread(void* threadId) {
 	pthread_exit(NULL);
 }
 
+/* Function for training in thread when context is known*/
+void* runTrainThreadForContext(void* threadId) {
+	/*vars*/
+	FILE* trainFileIter;
+
+	long long wordCount = 0;
+	long long lastWordCount = 0;
+	long long sentenceLength = 0;
+	long long wordIndex;
+	long long sentence[wordContextLen + 1];
+	long long threadLocalIter = iterations;
+	long long index1, index2, index3;
+	long long lastWordIndex;
+	long long label;
+	long long targetIndex;
+	long long updateRow;
+	long long updateRow2;
+
+	unsigned long long nextRandNum = (long long)threadId;
+
+	float updateValue;
+	float updateGradient;
+
+	clock_t currentTime;
+
+	/*execution*/
+	float* net1 = (float*)calloc(layerSize, sizeof(float));
+	float* net2 = (float*)calloc(layerSize, sizeof(float));
+	//open training file
+	trainFileIter = fopen(trainingFile, "rb");
+	if (trainFileIter == NULL) {
+		printf("ERROR: training file missing!\n");
+		exit(1);
+	}
+	fseek(trainFileIter, trainFileSize / (long long)numThreads * (long long)threadId, 
+			SEEK_SET); // check for middle of some word
+	//training loop
+	while(1) {
+		if (wordCount - lastWordCount > 10000) {
+			wordCountReal += wordCount - lastWordCount;
+			lastWordCount = wordCount;
+			currentTime = clock();
+			printf("%c alpha: %f progress: %.2f%% words/thread/sec: %.2f k ",
+				13, alpha, wordCountReal / (float)(iterations * numTrainingWords + 1) * 100,
+				wordCountReal / ((float) (currentTime - startTime + 1) / (float) CLOCKS_PER_SEC * 1000));
+			fflush(stdout);
+			alpha = seedAlpha * (1 - wordCountReal / (float)(iterations * numTrainingWords + 1));
+			if (alpha < seedAlpha * 0.0001) {
+				alpha = seedAlpha * 0.0001;
+			}
+		}
+
+		//sentence cration loop
+		if(sentenceLength == 0) {
+			while(1) {
+				// each line in file have word then 20 context word so we need array
+				// of size 21 to store it
+				wordIndex = getWordIndex(trainFileIter);
+				wordCount++;
+				sentence[sentenceLength] = wordIndex;
+				sentenceLength++;
+				if(sentenceLength > wordContextLen) {
+					break;
+				}
+			}
+		}
+		// check for iteration conditions
+		if(feof(trainFileIter)) {
+			wordCountReal += wordCount - lastWordCount;
+			threadLocalIter--;
+			if (threadLocalIter == 0) {
+				//end iterations
+				break;
+			}
+			wordCount = 0;
+			lastWordCount = 0;
+			sentenceLength = 0;
+			fseek(trainFileIter, trainFileSize / (long long)numThreads * (long long)threadId, 
+					SEEK_SET);
+			continue;
+		}
+
+		// start net traing with the word context received
+		wordIndex = sentence[0];
+		//initialize networks
+		for(index1 = 0; index1 < layerSize; index1++) {
+			net1[index1] = 0;
+		}
+		for(index1 = 0; index1 < layerSize; index1++) {
+			net2[index1] = 0;
+		}
+
+		if (usecbow) {
+			//train continuous bag of words
+			// input -> hidden
+			for (index1 = 1; index1 <= wordContextLen; index1++) {
+				lastWordIndex = sentence[index1];
+				for (index2 = 0; index2 < layerSize; index2++) {
+					net1[index2] += alignMem1[index2 + lastWordIndex * layerSize];
+				}
+			}
+			
+			for(index1 = 0; index1 < layerSize; index1++) {
+				net1[index1] /= wordContextLen;
+			}
+			// hirarchical softmax
+			if(hierSoftmax) {
+				for(index1 = 0; index1 < wordVocab[wordIndex].codelen; index1++) {
+					updateValue = 0;
+					updateRow = wordVocab[wordIndex].nodes[index1] * layerSize;
+					//forward hidden -> output
+					for (index2 = 0; index2 < layerSize; index2++) {
+						updateValue += net1[index2] * alignMem2[index2 + updateRow];
+					}
+					if(updateValue <= -MAX_EXP) {
+						continue;
+					} else if (updateValue >= MAX_EXP) {
+						continue;
+					} else {
+						updateValue = expTable[(int)((updateValue + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))];
+					}
+					// calculate gradient and multiply by learning rate
+					updateGradient = (1 - wordVocab[wordIndex].binCode[index1] - updateValue) * alpha;	
+					//backward update output-> hidden
+					for(index2 = 0; index2 < layerSize; index2++) {
+						net2[index2] += updateGradient * alignMem2[index2 + updateRow];
+					}
+					//update weights hidden -> output
+					for(index2 = 0; index2 < layerSize; index2++) {
+						alignMem2[index2 + updateRow] += updateGradient * net1[index2];
+					}		
+				}	
+			} // end of hierchical softmax 
+			//negative sampling
+			if(negSample > 0) {
+				for(index1 = 0; index1 < negSample + 1; index1++) {
+					if (index1 == 0) {
+						targetIndex = wordIndex;
+						label = 1;
+					} else {
+						nextRandNum = nextRandNum * (unsigned long long)25214903917 + 11;
+						targetIndex = unigramTable[(nextRandNum >> 16) % unigramTableSize];
+						if (targetIndex == 0) {
+							targetIndex = nextRandNum % (wordVocabSize -1) + 1;
+						}
+						if (targetIndex == wordIndex) {
+							continue;
+						}
+						label = 0;
+					}
+					updateRow = targetIndex * layerSize;
+					updateValue = 0;
+					for (index2 = 0; index2 < layerSize; index2++) {
+						updateValue += net1[index2] * alignMem1Neg[index2 + updateRow];
+					}
+					if (updateValue > MAX_EXP) {
+						updateGradient = (label - 1) * alpha;
+					} else if (updateValue < -MAX_EXP) {
+						updateGradient = (label - 0) * alpha;
+					} else {
+						updateGradient = (label - expTable[(int)((updateValue + MAX_EXP) * 
+							(EXP_TABLE_SIZE / MAX_EXP / 2))]) * alpha;
+					}
+					//propogate errors
+					for(index2 = 0; index2 < layerSize; index2++) {
+						net2[index2] += updateGradient * alignMem1Neg[index2 + updateRow];
+					}
+					//learn weights
+					for(index2 = 0; index2 < layerSize; index2++) {
+						alignMem1Neg[index2 + updateRow] += updateGradient * net1[index2];
+					}
+				}
+			} // end of negative sampling
+			// backward hidden -> input layer
+			for(index1 = 1; index1 <= wordContextLen; index1++) {
+				lastWordIndex = sentence[index1];
+				for(index2 = 0; index2 < layerSize; index2++) {
+					alignMem1[index2 + lastWordIndex * layerSize] += net2[index2];
+				}
+			}
+		} /*end of cbow training */ else {
+			// train skipgram
+			for(index1 = 1; index1 <= wordContextLen; index1++) {
+				lastWordIndex = sentence[index1];
+				updateRow = lastWordIndex * layerSize;
+				for(index2 = 0; index2 < layerSize; index2++) {
+					net2[index2] = 0;
+				}
+
+				//hirarchical softmax
+				if(hierSoftmax) {
+					for(index2 = 0; index2 < wordVocab[wordIndex].codelen; index2++) {
+						updateValue = 0;
+						updateRow2 = wordVocab[wordIndex].nodes[index2] * layerSize;
+						//propagate hidden->output
+						for (index3 = 0; index3 < layerSize; index3++) {
+							updateValue += alignMem1[index3 + updateRow] * alignMem2[index3 + updateRow2];
+						}
+						if (updateValue <= -MAX_EXP) {
+							continue;
+						} else if (updateValue >= MAX_EXP) {
+							continue;
+						} else {
+							updateValue = expTable[(int)((updateValue + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP/ 2))];
+						}
+						//update gradient
+						updateGradient = (1 - wordVocab[wordIndex].binCode[index2] - updateValue) * alpha;
+						//propagate errors
+						for (index3 = 0; index3 < layerSize; index3++) {
+							net2[index3] += updateGradient * alignMem2[index3 + updateRow2];
+						}
+						//learn weights
+						for (index3 = 0; index3 < layerSize; index3++) {
+							alignMem2[index3 + updateRow2] += updateGradient * alignMem1[index3 + updateRow];
+						}
+					}
+				}// end of hier softmax
+				//negative sampling
+				if(negSample > 0) {
+					for (index2 = 0; index2 < negSample + 1; index2++) {
+						if (index2 == 0) {
+							targetIndex = wordIndex;
+							label = 1;
+						} else {
+							nextRandNum = nextRandNum * (unsigned long long)25214903917 + 11;
+							targetIndex = unigramTable[(nextRandNum >> 16) % unigramTableSize];
+
+							if (targetIndex == 0) {
+								targetIndex = nextRandNum % (wordVocabSize - 1) + 1;
+							}
+
+							if (targetIndex == wordIndex) {
+								continue;
+							}
+							label = 0;
+						}
+						updateRow2 = targetIndex * layerSize;
+						updateValue = 0;
+						for(index3 = 0; index3 < layerSize; index3++) {
+							updateValue += alignMem1[index3 + updateRow] * alignMem1Neg[index3 + updateRow2];
+						}
+						if(updateValue > MAX_EXP) {
+							updateGradient = (label - 1) * alpha;
+						} else if (updateValue < -MAX_EXP) {
+							updateGradient = (label - 0) * alpha;
+						} else {
+							updateGradient = (label - expTable[(int)((updateValue + MAX_EXP) * 
+								(EXP_TABLE_SIZE / MAX_EXP / 2))]) * alpha;
+						}
+						//propagate errors
+						for (index3 = 0; index3 < layerSize; index3++) {
+							net2[index3] += updateGradient * alignMem1Neg[index3 + updateRow2];
+						}
+						//learn weights
+						for (index3 = 0; index3 < layerSize; index3++) {
+							alignMem1Neg[index3 + updateRow2] += updateGradient * alignMem1[index3 + updateRow];
+						}	
+					}
+				} // end of negative sampling
+				// learn weights
+				for(index2 = 0; index2 < layerSize; index2++) {
+					alignMem1[index2 + updateRow] += net2[index2];
+				}
+			}
+		} // end of skipgram training
+		//trin next word context
+		sentenceLength = 0;
+	} //end of training loop
+	fclose(trainFileIter);
+	free(net1);
+	free(net2);  //errors
+	pthread_exit(NULL);
+}
+
 /*Initialize and starts training*/
 void trainModel() {
 	/*vars*/
@@ -1051,6 +1328,23 @@ int main(int argc, char** argv) {
 	if ((index = getArgPos("-savevocab", argc, argv)) > 0) {
 		strcpy(saveVocabFile, argv[index + 1]);
 	}
+	if ((index = getArgPos("-threads", argc, argv)) > 0) {
+		numThreads = atoi(argv[index + 1]);
+	}
+	if ((index = getArgPos("-contextknown", argc, argv)) > 0) {
+		contextKnown = atoi(argv[index + 1]);
+		numThreads = 1; //change it to cover multithreaded case
+	}
+	if ((index = getArgPos("-contextSize", argc, argv)) > 0) {
+		wordContextLen = atoi(argv[index + 1]);
+	}
+	if ((index = getArgPos("-savebinary", argc, argv)) > 0) {
+		storeVecAsBinary = atoi(argv[index + 1]);
+	}
+	if ((index = getArgPos("-wordfrequency", argc, argv)) > 0) {
+		minWordCount = atoi(argv[index + 1]);
+	}
+
 
 	printf("\nVector size: %lld\n", layerSize);
 	printf("Training file: %s\n", trainingFile);
@@ -1064,6 +1358,11 @@ int main(int argc, char** argv) {
 	printf("Number of iterations: %lld\n", iterations);
 	printf("Saved vocab file: %s\n", saveVocabFile);
 	printf("Number of threads: %d\n", numThreads);
+	printf("Word context known: %d\n", contextKnown);
+	printf("Word context size: %d\n", wordContextLen);
+	printf("Save vector as binary: %d\n", storeVecAsBinary);
+	printf("Frequency of a word in vocab: %d\n", minWordCount);
+
 	//start trining
     trainModel();
     return 0;
