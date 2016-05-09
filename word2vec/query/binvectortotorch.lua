@@ -10,7 +10,7 @@
 local pl = (require 'pl.import_into')()
 stringx.import()
 
-local vectorFile = torch.DiskFile(options.vectorFilePath, 'r')
+
 local maxWordLength = 100 -- maximum length of vocab strings while training
 
 -- functions
@@ -29,43 +29,59 @@ function readWord(file)
 end
 
 
--- ascii handler
-vectorFile:ascii()
+function loadModel(file)
+	local vectorFile = torch.DiskFile(file, 'r')
+	-- ascii handler
+	vectorFile:ascii()
 
-local vocabSize = vectorFile:readInt()
-local vectorSize = vectorFile:readInt()
+	local vocabSize = vectorFile:readInt()
+	local vectorSize = vectorFile:readInt()
 
-local wordToVocabIndex = {}
-local vocabIndexToWord = {}
-local vectorMatrix = torch.FloatTensor(vocabSize, vectorSize)
+	local wordToVocabIndex = {}
+	local vocabIndexToWord = {}
+	local vectorMatrix = torch.FloatTensor(vocabSize, vectorSize)
 
--- read vectors as binary
-vectorFile:binary()
+	-- read vectors as binary
+	vectorFile:binary()
 
-for i = 1, vocabSize do
-	local word = readWord(vectorFile)
-	--print(word)
-	local vector = vectorFile:readFloat(vectorSize)
-	vector = torch.FloatTensor(vector)
+	for i = 1, vocabSize do
+		local word = readWord(vectorFile)
+		--print(word)
+		local vector = vectorFile:readFloat(vectorSize)
+		vector = torch.FloatTensor(vector)
 
-	local norm = torch.norm(vector, 2)
-	if norm ~= 0 then
-		vector:div(norm)
+		local norm = torch.norm(vector, 2)
+		if norm ~= 0 then
+			vector:div(norm)
+		end
+
+		wordToVocabIndex[word] = i
+		vocabIndexToWord[i] = word
+
+		vectorMatrix[{{i}, {}}] = vector
 	end
 
-	wordToVocabIndex[word] = i
-	vocabIndexToWord[i] = word
-
-	vectorMatrix[{{i}, {}}] = vector
+	return wordToVocabIndex, vocabIndexToWord, vectorMatrix
 end
 
--- write torch table to file
 word2vec = {}
-word2vec.vectorMatrix = vectorMatrix
-word2vec.wordToVocabIndex = wordToVocabIndex
-word2vec.vocabIndexToWord = vocabIndexToWord
+local wordToVocabIndex
+local vocabIndexToWord 
+local vectorMatrix
 
-torch.save(options.vectorTorchFilePath, word2vec)
+-- load noun model
+wordToVocabIndex, vocabIndexToWord, vectorMatrix = loadModel(options.nounVectorFilePath)
+word2vec.nounVectorMatrix = vectorMatrix
+word2vec.nounWordToVocabIndex = wordToVocabIndex
+word2vec.nounVocabIndexToWord = vocabIndexToWord
+
+-- load adjective model
+wordToVocabIndex, vocabIndexToWord, vectorMatrix = loadModel(options.adjVectorFilePath)
+word2vec.adjVectorMatrix = vectorMatrix
+word2vec.adjWordToVocabIndex = wordToVocabIndex
+word2vec.adjVocabIndexToWord = vocabIndexToWord
+
+torch.save(options.torchVectorsFilePath, word2vec)
 print('binary vectors to torch table conversion complete')
 
 return word2vec

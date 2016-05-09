@@ -15,4 +15,4 @@ cleandump:
 	rm -rf ./dump/*
 
 cleanbin:
-	rm -rf ../datafiles/word2vecdata/nounphrasevectors.bin ../datafiles/word2vecdata/nounphrasevectors.t7 
+	rm -rf ../datafiles/word2vecdata/nounphrasevectors.bin ../datafiles/word2vecdata/adjectivevectors.bin ../datafiles/word2vecdata/torchVectors.t7

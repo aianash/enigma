@@ -3,6 +3,7 @@
 #include <string.h>
 #include <math.h>
 #include <pthread.h>
+#include <unistd.h>
 
 #define MAX_STRING_LEN 100
 #define EXP_TABLE_SIZE 1000
@@ -33,7 +34,7 @@ int hierSoftmax = 0;
 int negSample = 5;
 int numThreads = 5;
 int wordWindow = 5;
-int storeVecAsBinary = 0;
+int storeVecAsBinary = 1;
 int contextKnown = 0;
 int wordContextLen = 20;
 
@@ -1250,7 +1251,11 @@ void trainModel() {
 	//get strarting time
 	startTime = clock();
 	for(index1 = 0; index1 < numThreads; index1++) {
-		pthread_create(&threads[index1], NULL, runTrainThread, (void*) index1);
+		if(!contextKnown){
+			pthread_create(&threads[index1], NULL, runTrainThread, (void*) index1);
+		} else {
+			pthread_create(&threads[index1], NULL, runTrainThreadForContext, (void*) index1);
+		}
 	}
 	for(index1 = 0; index1 < numThreads; index1++) {
 		pthread_join(threads[index1], NULL);
@@ -1335,7 +1340,7 @@ int main(int argc, char** argv) {
 		contextKnown = atoi(argv[index + 1]);
 		numThreads = 1; //change it to cover multithreaded case
 	}
-	if ((index = getArgPos("-contextSize", argc, argv)) > 0) {
+	if ((index = getArgPos("-contextsize", argc, argv)) > 0) {
 		wordContextLen = atoi(argv[index + 1]);
 	}
 	if ((index = getArgPos("-savebinary", argc, argv)) > 0) {
@@ -1365,5 +1370,6 @@ int main(int argc, char** argv) {
 
 	//start trining
     trainModel();
+    sleep(5);
     return 0;
 }

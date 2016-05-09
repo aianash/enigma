@@ -6,18 +6,16 @@ import bz2
 import sys
 import time
 import traceback
+import json
 
 from nltk.corpus import wordnet
-
-from utils import PyDictionary
-from PyDictionary import PyDictionary
 
 
 class WordnetUtil:
 	def __init__(self):
 		program = os.path.basename(sys.argv[0])
 		self.logger = logging.getLogger(program)
-		self.wordnetAdjFilePath = "../datafiles/preprocesseddata/wordnetadj"
+		self.wordnetAdjFilePath = "../datafiles/preprocesseddata/wordnetadjectives"
 
 		#initialize logger
 		logging.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s')
@@ -25,93 +23,94 @@ class WordnetUtil:
 		self.logger.info("running %s" % ' '.join(sys.argv))
 
 
-	def __get_synset_values(self, synset):
-		syn_word_list = []
-		for lemma in wordnet.synset(synset.name()).lemmas():
-			syn_word_list.append(lemma.name())
-		return syn_word_list
-
-	def get_similarto_words(self):
-		synsets = wordnet.synsets("modern", 'a')
-		for synset in synsets:
-			similarto = wordnet.synset(synset.name()).lemmas()
-			print similarto[0].derivationally_related_forms()
+	def __get_syn_values(self, word):
+		if word is None:
+			self.logger.info("Error: Invalid word")
+			return
+		try:
+			words_synsets = wordnet.synsets(word, 'a')
+			#print words_synsets
+			word_syn_list = []
+			for synset in words_synsets:
+				for lemma in wordnet.synset(synset.name()).lemmas():
+					#print lemma.name()
+					word_syn_list.append(lemma.name())
+			return word_syn_list
+		except Exception as e:
+			self.logger.info("Exception occured while getting lemma names for word {0}".format(word))
+			raise e
 		
 	def generate_wordnet_synsets(self):
 		self.logger.info("Generate wordnet synsets begin")
 
 		try:
+			word_seed_list = set()
 			#get all adjective synsets
-			all_synset_list = []
 			for synset in wordnet.all_synsets('a'):
-				all_synset_list.append(synset)
-			print len(all_synset_list)			
+				word = synset.name().partition('.')[0].strip()
+				word_seed_list.add(word)
+			#print len(all_synset_list)			
 
-			word_list_synset_map = {}
-			word_list_pydict_map = {}
-			word_list_seed = []
-
-			for valueset in all_synset_list:
-				word = valueset.name().partition('.')[0]
-				word_list_seed.append(word)
+			word_syn_map = {}
+			
+			for word in word_seed_list:
 				#print word
-				word_list_synset = self.__get_synset_values(valueset)
-				if word_list_synset is not None:
-					word_list_synset = [w for w in word_list_synset if w != word]
+				word_syn_list = self.__get_syn_values(word)
+				if word_syn_list is not None:
+					word_syn_list = [w for w in word_syn_list if w != word]
 				else:
-					word_list_synset = []
+					word_syn_list = []
 
-				word_list_synset_map[word] = word_list_synset
-				#filter(lambda a: a != word, word_list_synset)
-				#print word_list_synset
+				#print word_list_synset	
+				if word not in word_syn_map:
+					word_syn_map[word] = word_syn_list
+				else:
+					word_syn_map[word].extend(word_syn_list)
 
-			py_dict = PyDictionary(word_list_seed)
-			word_list_pydict = py_dict.getSynonyms(False)
-			print type(word_list_pydict)
+			#print len(word_list_seed)
+			writeFileIter = open(self.wordnetAdjFilePath, 'w+')
+			#print word_list_synset_map['able']
+			for word, syn_list in sorted(word_syn_map.items()):
+				json_word_context = self.get_json_word_context(word, syn_list)
+			 	writeFileIter.write(json_word_context + '\n')
+			writeFileIter.close()	
 
-			#filter(lambda a: a != word, word_list_pydict)
-			if word_list_pydict is not None:
-				word_list_pydict = [w for w in word_list_pydict if w != word]
-			else:
-				word_list_pydict = []
-			#print word_list_pydict
-
-				syn_word_list.extend(word_list_synset)
-				syn_word_list.extend(word_list_pydict)
-				syn_word_list.append(word)
-				syn_word_list.extend(word_list_pydict)
-				syn_word_list.extend(word_list_synset)
-
-				#print syn_word_list
-				#break
-
-			writeFileIter = open(self.wordnetAdjFilePath, 'wb+')
-
-			print len(syn_word_list)
-			for word in syn_word_list:
-			 	writeFileIter.write(word + ' ')
-
-			writeFileIter.close()				
 		except IOError as e:
 			self.logger.info("IOError: %s: %s" % (e.filename, e.strerror))
+			raise e
 		except Exception as e:
-			exc_type, exc_value, exc_traceback = sys.exc_info()
-			print exc_type
-			print exc_value
-			print(repr(traceback.format_tb(exc_traceback)))
-			print("LINE WHERE EXCEPTION OCCURED : ", exc_traceback.tb_lineno)
+			self.logger.info("Exception occured while generating synsets")
+			raise e
 
 		finally:
 			if writeFileIter is not None:
 				writeFileIter.close()
 			self.logger.info("Generate wordnet synsets end")
 
+	def get_json_word_context(self, word, syn_list):
+		if syn_list is None or word is None:
+			self.logger.info("Error: Invalid word context list")
+			return
+
+		try:
+			context_map = {}
+			context_map["synonyms"] = syn_list
+
+			obj_map = {}
+			obj_map["word"] = word
+			obj_map["context"] = context_map
+
+			return json.dumps(obj_map, encoding='utf-8')
+
+		except Exception as e:
+			self.logger.info("Unable to cretae json for word context")
+			raise e
+
+
 	def execute(self):
 		try:
 			#Generate maps
-			#word_net_util.generate_wordnet_synsets()
-			#word_net_util.get_similarto_words()
-			self.getPage()
+			self.generate_wordnet_synsets()
 		except Exception as e:
 			exc_type, exc_value, exc_traceback = sys.exc_info()
 			print exc_type
