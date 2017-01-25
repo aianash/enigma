@@ -1,0 +1,626 @@
+(dp0
+I0
+S'Christmas'
+p1
+sI1
+S'Costume'
+p2
+sI2
+S'Film festival'
+p3
+sI3
+S'Funeral'
+p4
+sI4
+S'Fashion'
+p5
+sI5
+S'Holiday'
+p6
+sI6
+S'Halloween'
+p7
+sI7
+S'Party'
+p8
+sI8
+S'Pub'
+p9
+sI9
+S'Ramadan'
+p10
+sI10
+S'Tourism'
+p11
+sI11
+S'Wedding'
+p12
+sI12
+S'Barbecue'
+p13
+sI13
+S'Lingerie'
+p14
+sI14
+S'Clothing'
+p15
+sI15
+S'Hosiery'
+p16
+sI16
+S'Uniform'
+p17
+sI17
+S'Wedding reception'
+p18
+sI18
+S'Engagement'
+p19
+sI19
+S'Gift'
+p20
+sI20
+S'Textile'
+p21
+sI21
+S'Brunch'
+p22
+sI22
+S'Denim'
+p23
+sI23
+S'Festival'
+p24
+sI24
+S'Ooty'
+p25
+sI25
+S'Hiking'
+p26
+sI26
+S'T-shirt'
+p27
+sI27
+S'Skin-tight garment'
+p28
+sI28
+S'Pajamas'
+p29
+sI29
+S'Travel'
+p30
+sI30
+S"New Year's Day"
+p31
+sI31
+S'Graduation'
+p32
+sI32
+S'Ceremony'
+p33
+sI33
+S'Stocking'
+p34
+sI34
+S'Competition'
+p35
+sI35
+S"Valentine's Day"
+p36
+sI36
+S'Sweater'
+p37
+sI37
+S'Diwali'
+p38
+sI38
+S'Shorts'
+p39
+sI39
+S'Miniskirt'
+p40
+sI40
+S'Swimsuit'
+p41
+sI41
+S'Meeting'
+p42
+sI42
+S'Camping'
+p43
+sI43
+S'Skirt'
+p44
+sI44
+S'Ready-to-wear'
+p45
+sI45
+S'Concert'
+p46
+sI46
+S'Prom'
+p47
+sI47
+S'Robe'
+p48
+sI48
+S'Shirt'
+p49
+sI49
+S'Bar'
+p50
+sI50
+S'Bridesmaid'
+p51
+sI51
+S'Bodysuit'
+p52
+sI52
+S'Safari jacket'
+p53
+sI53
+S'Academic dress'
+p54
+sI54
+S'Conference'
+p55
+sI55
+S'Coat (clothing)'
+p56
+sI56
+S'Suit (clothing)'
+p57
+sI57
+S'Office'
+p58
+sI58
+S'Sari'
+p59
+sI59
+S'Kurta'
+p60
+sI60
+S'Vijayadashami'
+p61
+sI61
+S'Wedding dress'
+p62
+sI62
+S'Makar Sankranti'
+p63
+sI63
+S'Holi'
+p64
+sI64
+S'Jersey (clothing)'
+p65
+sI65
+S'Vacation'
+p66
+sI66
+S'Convocation'
+p67
+sI67
+S'Hip hop fashion'
+p68
+sI68
+S'Nightwear'
+p69
+sI69
+S'Formal wear'
+p70
+sI70
+S'Folk costume'
+p71
+sI71
+S'Jacket'
+p72
+sI72
+S'Bachelor party'
+p73
+sI73
+S'Sarong'
+p74
+sI74
+S'Homecoming'
+p75
+sI75
+S'Bell-bottoms'
+p76
+sI76
+S'Dress code'
+p77
+sI77
+S'Nehru jacket'
+p78
+sI78
+S'Baby shower'
+p79
+sI79
+S'Clothing in India'
+p80
+sI80
+S'Premiere'
+p81
+sI81
+S'Raksha Bandhan'
+p82
+sI82
+S'Overcoat'
+p83
+sI83
+S'Family reunion'
+p84
+sI84
+S'Polo shirt'
+p85
+sI85
+S'Frock'
+p86
+sI86
+S'Krishna Janmashtami'
+p87
+sI87
+S'Fashion accessory'
+p88
+sI88
+S'Bhau-beej'
+p89
+sI89
+S'Strap'
+p90
+sI90
+S'Dandiya Raas'
+p91
+sI91
+S'Costume party'
+p92
+sI92
+S'Polka dot'
+p93
+sI93
+S'Bodice'
+p94
+sI94
+S'Morning dress'
+p95
+sI95
+S'Blazer'
+p96
+sI96
+S'Bachelorette party'
+p97
+sI97
+S'Tracksuit'
+p98
+sI98
+S'Chino cloth'
+p99
+sI99
+S'Hoodie'
+p100
+sI100
+S'Indo-Western clothing'
+p101
+sI101
+S'Dupatta'
+p102
+sI102
+S'Chhath'
+p103
+sI103
+S'Procession'
+p104
+sI104
+S'Ball (dance party)'
+p105
+sI105
+S'Cocktail dress'
+p106
+sI106
+S'Capri pants'
+p107
+sI107
+S'Job interview'
+p108
+sI108
+S'Clothing terminology'
+p109
+sI109
+S'List of Hindu festivals'
+p110
+sI110
+S'Western wear'
+p111
+sI111
+S'Category:Western wear'
+p112
+sI112
+S'Dress shirt'
+p113
+sI113
+S'Hoop skirt'
+p114
+sI114
+S'Semi-formal'
+p115
+sI115
+S'Casual'
+p116
+sI116
+S'Academic conference'
+p117
+sI117
+S'Fur clothing'
+p118
+sI118
+S'Independence Day (India)'
+p119
+sI119
+S'Sherwani'
+p120
+sI120
+S'Jodhpuri'
+p121
+sI121
+S'Bridal shower'
+p122
+sI122
+S'Cargo pants'
+p123
+sI123
+S'Smart casual'
+p124
+sI124
+S'Class reunion'
+p125
+sI125
+S'Banarasi sari'
+p126
+sI126
+S'Convention (meeting)'
+p127
+sI127
+S'Category:Nightwear'
+p128
+sI128
+S'Bermuda shorts'
+p129
+sI129
+S'Fad'
+p130
+sI130
+S'Housewarming party'
+p131
+sI131
+S'Gown'
+p132
+sI132
+S'Vasant Panchami'
+p133
+sI133
+S'Category:Indian clothing'
+p134
+sI134
+S'Embroidery of India'
+p135
+sI135
+S'Gymslip'
+p136
+sI136
+S'Category:Suits (clothing)'
+p137
+sI137
+S'Resort wear'
+p138
+sI138
+S'See-through clothing'
+p139
+sI139
+S'Hammer pants'
+p140
+sI140
+S'Western dress codes'
+p141
+sI141
+S'Informal attire'
+p142
+sI142
+S'Sportswear (activewear)'
+p143
+sI143
+S'Churidar'
+p144
+sI144
+S'Music festival'
+p145
+sI145
+S'Workwear'
+p146
+sI146
+S'Category:Workwear'
+p147
+sI147
+S'Train (clothing)'
+p148
+sI148
+S'Clubwear'
+p149
+sI149
+S'Tuxedo'
+p150
+sI150
+S'Sundress'
+p151
+sI151
+S'Cheerleading uniform'
+p152
+sI152
+S'Category:Dresses'
+p153
+sI153
+S'Dating'
+p154
+sI154
+S'Category:Clothing by function'
+p155
+sI155
+S'Birthday customs and celebrations'
+p156
+sI156
+S'Index of fashion articles'
+p157
+sI157
+S'Category:Lingerie'
+p158
+sI158
+S'Category:Dancewear'
+p159
+sI159
+S'Camp shirt'
+p160
+sI160
+S'Lehenga'
+p161
+sI161
+S'Dress'
+p162
+sI162
+S'Backless dress'
+p163
+sI163
+S'Bench shirt'
+p164
+sI164
+S'Engagement party'
+p165
+sI165
+S'Dance costume'
+p166
+sI166
+S'Top (clothing)'
+p167
+sI167
+S'Category:Formal wear'
+p168
+sI168
+S'Outerwear'
+p169
+sI169
+S'Template:Clothing'
+p170
+sI170
+S'Maternity clothing'
+p171
+sI171
+S'Street fashion'
+p172
+sI172
+S'Religious clothing'
+p173
+sI173
+S'Gharara'
+p174
+sI174
+S'Ball dress'
+p175
+sI175
+S'Trousers'
+p176
+sI176
+S'Undergarment'
+p177
+sI177
+S'Black Friday (partying)'
+p178
+sI178
+S'Birthday'
+p179
+sI179
+S'Dance party'
+p180
+sI180
+S'Sportswear (fashion)'
+p181
+sI181
+S'Capsule wardrobe'
+p182
+sI182
+S'Summer Wear'
+p183
+sI183
+S'Low-rise (fashion)'
+p184
+sI184
+S'Reversible garment'
+p185
+sI185
+S'Lehenga Style Saree'
+p186
+sI186
+S'Pencil suit'
+p187
+sI187
+S'Indian wedding clothes'
+p188
+sI188
+S'Category:Tops (clothing)'
+p189
+sI189
+S'Crew neck'
+p190
+sI190
+S'2010s in fashion'
+p191
+sI191
+S'Business Casual'
+p192
+sI192
+S'Recreational travel'
+p193
+sI193
+S'Sunburn Festival'
+p194
+sI194
+S'Party dress'
+p195
+sI195
+S'Stirrup pants'
+p196
+sI196
+S'Yoga pants'
+p197
+sI197
+S'Palazzo pants'
+p198
+sI198
+S'Overskirt'
+p199
+sI199
+S'High-low skirt'
+p200
+sI200
+S'Handkerchief skirt'
+p201
+sI201
+S'Strapless dress'
+p202
+sI202
+S'Goa'
+p203
+sI203
+S'Fashion in India'
+p204
+sI204
+S'Salwar'
+p205
+sI205
+S'Sweatpants'
+p206
+sI206
+S'Rang Panchami'
+p207
+sI207
+S'College interview'
+p208
+s.
